@@ -1,11 +1,10 @@
 import 'package:flutter/cupertino.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../domain/models/group.dart';
 
 class GroupListCard extends StatelessWidget {
-  final String name;
-  final String category;
-  final String members;
+  final Group group;
   final String activity;
   final String amount;
   final String status;
@@ -15,9 +14,7 @@ class GroupListCard extends StatelessWidget {
 
   const GroupListCard({
     super.key,
-    required this.name,
-    required this.category,
-    required this.members,
+    required this.group,
     required this.activity,
     required this.amount,
     required this.status,
@@ -56,7 +53,7 @@ class GroupListCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      name,
+                      group.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -67,7 +64,7 @@ class GroupListCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 5),
                     Text(
-                      '$category • $members',
+                      '${group.category} • ${group.memberCount} members',
                       style: const TextStyle(
                         fontSize: 12,
                         color: AppColors.textSecondary,

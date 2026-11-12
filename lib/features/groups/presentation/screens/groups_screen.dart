@@ -1,13 +1,165 @@
 import 'package:flutter/cupertino.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../domain/models/group.dart';
+import '../../domain/models/group_member.dart';
 import '../widgets/group_list_card.dart';
 
-class GroupsScreen extends StatelessWidget {
+class GroupsScreen extends StatefulWidget {
   const GroupsScreen({super.key});
 
   @override
+  State<GroupsScreen> createState() => _GroupsScreenState();
+}
+
+class _GroupsScreenState extends State<GroupsScreen> {
+  final List<String> categories = [
+    'All',
+    'Flatmates',
+    'Trips',
+    'College',
+    'Hostel',
+  ];
+
+  String selectedCategory = 'All';
+  String searchQuery = '';
+
+  late final List<_GroupEntry> groups;
+
+  @override
+  void initState() {
+    super.initState();
+
+    groups = [
+      _GroupEntry(
+        group: _createGroup(
+          id: 'flat_304',
+          name: 'Flat 304 - Indiranagar',
+          category: 'Flatmates',
+          memberCount: 4,
+        ),
+        activity: 'Electricity bill paid by Aarav',
+        amount: '+₹1,850',
+        status: 'You receive',
+        icon: CupertinoIcons.house,
+        amountColor: AppColors.sageDark,
+        iconBackground: AppColors.sage,
+      ),
+
+      _GroupEntry(
+        group: _createGroup(
+          id: 'manali_trek',
+          name: 'Manali Trek Dec',
+          category: 'Trips',
+          memberCount: 8,
+        ),
+        activity: 'Tempo traveller rental booked',
+        amount: '-₹620',
+        status: 'You owe',
+        icon: CupertinoIcons.airplane,
+        amountColor: AppColors.primary,
+        iconBackground: AppColors.secondary,
+      ),
+
+      _GroupEntry(
+        group: _createGroup(
+          id: 'cse_team',
+          name: 'CSE Dept Core Team',
+          category: 'College',
+          memberCount: 15,
+        ),
+        activity: 'Hackathon posters printed',
+        amount: 'Settled',
+        status: 'All clear',
+        icon: CupertinoIcons.person_3,
+        amountColor: AppColors.sageDark,
+        iconBackground: AppColors.sage,
+      ),
+
+      _GroupEntry(
+        group: _createGroup(
+          id: 'hostel_wing_b',
+          name: 'Hostel Wing B Mess',
+          category: 'Hostel',
+          memberCount: 6,
+        ),
+        activity: 'Late night Maggi pantry run',
+        amount: '+₹420',
+        status: 'You receive',
+        icon: CupertinoIcons.house_fill,
+        amountColor: AppColors.sageDark,
+        iconBackground: AppColors.secondary,
+      ),
+    ];
+  }
+
+  // Create sample group with sample members.
+  Group _createGroup({
+    required String id,
+    required String name,
+    required String category,
+    required int memberCount,
+  }) {
+    final members = List.generate(memberCount, (index) {
+      final names = ['You', 'Aarav', 'Meera', 'Kabir'];
+
+      return GroupMember(
+        userId: '${id}_user_$index',
+        displayName: index < names.length
+            ? names[index]
+            : 'Member ${index + 1}',
+        role: index == 0 ? GroupRole.owner : GroupRole.member,
+      );
+    });
+
+    return Group(
+      id: id,
+      name: name,
+      category: category,
+      createdBy: members.first.userId,
+      createdAt: DateTime.now(),
+      members: members,
+    );
+  }
+
+  // Search and category filtering.
+  List<_GroupEntry> get filteredGroups {
+    return groups.where((entry) {
+      final matchesCategory =
+          selectedCategory == 'All' || entry.group.category == selectedCategory;
+
+      final matchesSearch = entry.group.name.toLowerCase().contains(
+        searchQuery.toLowerCase(),
+      );
+
+      return matchesCategory && matchesSearch;
+    }).toList();
+  }
+
+  void _showCreateGroupMessage() {
+    showCupertinoDialog(
+      context: context,
+      builder: (context) {
+        return CupertinoAlertDialog(
+          title: const Text('Create Group'),
+          content: const Text(
+            'Group creation will be implemented in the next step.',
+          ),
+          actions: [
+            CupertinoDialogAction(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final visibleGroups = filteredGroups;
+
     return CupertinoPageScaffold(
       backgroundColor: AppColors.background,
 
@@ -16,7 +168,7 @@ class GroupsScreen extends StatelessWidget {
         backgroundColor: AppColors.background.withValues(alpha: 0.9),
         trailing: CupertinoButton(
           padding: EdgeInsets.zero,
-          onPressed: () {},
+          onPressed: _showCreateGroupMessage,
           child: const Icon(CupertinoIcons.add, color: AppColors.primary),
         ),
       ),
@@ -72,7 +224,7 @@ class GroupsScreen extends StatelessWidget {
                       vertical: 8,
                     ),
                     borderRadius: BorderRadius.circular(12),
-                    onPressed: () {},
+                    onPressed: _showCreateGroupMessage,
                     child: const Text('Create'),
                   ),
                 ],
@@ -81,12 +233,17 @@ class GroupsScreen extends StatelessWidget {
 
             const SizedBox(height: 24),
 
-            // Search Field
+            // Search
             CupertinoSearchTextField(
               placeholder: 'Search groups...',
               backgroundColor: AppColors.surface,
               borderRadius: BorderRadius.circular(14),
               padding: const EdgeInsets.all(12),
+              onChanged: (value) {
+                setState(() {
+                  searchQuery = value;
+                });
+              },
             ),
 
             const SizedBox(height: 18),
@@ -96,13 +253,20 @@ class GroupsScreen extends StatelessWidget {
               height: 36,
               child: ListView(
                 scrollDirection: Axis.horizontal,
-                children: [
-                  _CategoryChip(title: 'All', selected: true),
-                  _CategoryChip(title: 'Flatmates'),
-                  _CategoryChip(title: 'Trips'),
-                  _CategoryChip(title: 'College'),
-                  _CategoryChip(title: 'Clubs'),
-                ],
+                children: categories.map((category) {
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: _CategoryChip(
+                      title: category,
+                      selected: selectedCategory == category,
+                      onTap: () {
+                        setState(() {
+                          selectedCategory = category;
+                        });
+                      },
+                    ),
+                  );
+                }).toList(),
               ),
             ),
 
@@ -155,9 +319,9 @@ class GroupsScreen extends StatelessWidget {
             const SizedBox(height: 24),
 
             // Groups Heading
-            const Text(
-              'All Groups',
-              style: TextStyle(
+            Text(
+              selectedCategory == 'All' ? 'All Groups' : selectedCategory,
+              style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w700,
                 color: AppColors.textPrimary,
@@ -166,63 +330,56 @@ class GroupsScreen extends StatelessWidget {
 
             const SizedBox(height: 14),
 
-            // Group 1
-            const GroupListCard(
-              name: 'Flat 304 - Indiranagar',
-              category: 'Flatmates',
-              members: '4 members',
-              activity: 'Electricity bill paid by Aarav',
-              amount: '+₹1,850',
-              status: 'You receive',
-              icon: CupertinoIcons.house,
-              amountColor: AppColors.sageDark,
-              iconBackground: AppColors.sage,
-            ),
-
-            const SizedBox(height: 12),
-
-            // Group 2
-            const GroupListCard(
-              name: 'Manali Trek Dec',
-              category: 'Trip',
-              members: '8 members',
-              activity: 'Tempo traveller rental booked',
-              amount: '-₹620',
-              status: 'You owe',
-              icon: CupertinoIcons.airplane,
-              amountColor: AppColors.primary,
-              iconBackground: AppColors.secondary,
-            ),
-
-            const SizedBox(height: 12),
-
-            // Group 3
-            const GroupListCard(
-              name: 'CSE Dept Core Team',
-              category: 'College',
-              members: '15 members',
-              activity: 'Hackathon posters printed',
-              amount: 'Settled',
-              status: 'All clear',
-              icon: CupertinoIcons.person_3,
-              amountColor: AppColors.sageDark,
-              iconBackground: AppColors.sage,
-            ),
-
-            const SizedBox(height: 12),
-
-            // Group 4
-            const GroupListCard(
-              name: 'Hostel Wing B Mess',
-              category: 'Hostel',
-              members: '6 members',
-              activity: 'Late night Maggi pantry run',
-              amount: '+₹420',
-              status: 'You receive',
-              icon: CupertinoIcons.house_fill,
-              amountColor: AppColors.sageDark,
-              iconBackground: AppColors.secondary,
-            ),
+            // Filtered Group Cards
+            if (visibleGroups.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: const Column(
+                  children: [
+                    Icon(
+                      CupertinoIcons.search,
+                      size: 30,
+                      color: AppColors.textSecondary,
+                    ),
+                    SizedBox(height: 10),
+                    Text(
+                      'No groups found',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Try another name or category.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              ...visibleGroups.map((entry) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: GroupListCard(
+                    group: entry.group,
+                    activity: entry.activity,
+                    amount: entry.amount,
+                    status: entry.status,
+                    icon: entry.icon,
+                    amountColor: entry.amountColor,
+                    iconBackground: entry.iconBackground,
+                  ),
+                );
+              }),
           ],
         ),
       ),
@@ -230,32 +387,61 @@ class GroupsScreen extends StatelessWidget {
   }
 }
 
+// Group data shown in the UI.
+class _GroupEntry {
+  final Group group;
+  final String activity;
+  final String amount;
+  final String status;
+  final IconData icon;
+  final Color amountColor;
+  final Color iconBackground;
+
+  const _GroupEntry({
+    required this.group,
+    required this.activity,
+    required this.amount,
+    required this.status,
+    required this.icon,
+    required this.amountColor,
+    required this.iconBackground,
+  });
+}
+
 // Category Filter Widget
 class _CategoryChip extends StatelessWidget {
   final String title;
   final bool selected;
+  final VoidCallback onTap;
 
-  const _CategoryChip({required this.title, this.selected = false});
+  const _CategoryChip({
+    required this.title,
+    required this.onTap,
+    this.selected = false,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(right: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: selected ? AppColors.secondary : AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: selected ? AppColors.primaryLight : AppColors.border,
+    return CupertinoButton(
+      padding: EdgeInsets.zero,
+      onPressed: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? AppColors.secondary : AppColors.surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected ? AppColors.primaryLight : AppColors.border,
+          ),
         ),
-      ),
-      child: Text(
-        title,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: selected ? AppColors.primary : AppColors.textSecondary,
+        child: Text(
+          title,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: selected ? AppColors.primary : AppColors.textSecondary,
+          ),
         ),
       ),
     );
