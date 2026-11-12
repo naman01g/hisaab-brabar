@@ -11,6 +11,7 @@ class GroupListCard extends StatelessWidget {
   final IconData icon;
   final Color amountColor;
   final Color iconBackground;
+  final VoidCallback onTap;
 
   const GroupListCard({
     super.key,
@@ -21,118 +22,122 @@ class GroupListCard extends StatelessWidget {
     required this.icon,
     required this.amountColor,
     required this.iconBackground,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                height: 46,
-                width: 46,
-                decoration: BoxDecoration(
-                  color: iconBackground,
-                  borderRadius: BorderRadius.circular(14),
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  height: 46,
+                  width: 46,
+                  decoration: BoxDecoration(
+                    color: iconBackground,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(icon, color: AppColors.primary),
                 ),
-                child: Icon(icon, color: AppColors.primary),
-              ),
 
-              const SizedBox(width: 12),
+                const SizedBox(width: 12),
 
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        group.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        '${group.category} • ${group.memberCount} members',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(width: 8),
+
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      group.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      amount,
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
+                        color: amountColor,
                       ),
                     ),
-                    const SizedBox(height: 5),
+                    const SizedBox(height: 4),
                     Text(
-                      '${group.category} • ${group.memberCount} members',
+                      status,
                       style: const TextStyle(
-                        fontSize: 12,
+                        fontSize: 10,
                         color: AppColors.textSecondary,
                       ),
                     ),
                   ],
                 ),
-              ),
+              ],
+            ),
 
-              const SizedBox(width: 8),
+            const SizedBox(height: 14),
 
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    amount,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: amountColor,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    status,
+            Container(height: 1, color: AppColors.border),
+
+            const SizedBox(height: 10),
+
+            Row(
+              children: [
+                const Icon(
+                  CupertinoIcons.clock,
+                  size: 14,
+                  color: AppColors.textSecondary,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    activity,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      fontSize: 10,
+                      fontSize: 11,
                       color: AppColors.textSecondary,
                     ),
                   ),
-                ],
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 14),
-
-          Container(height: 1, color: AppColors.border),
-
-          const SizedBox(height: 10),
-
-          Row(
-            children: [
-              const Icon(
-                CupertinoIcons.clock,
-                size: 14,
-                color: AppColors.textSecondary,
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  activity,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppColors.textSecondary,
-                  ),
                 ),
-              ),
-              const Icon(
-                CupertinoIcons.chevron_right,
-                size: 15,
-                color: AppColors.textSecondary,
-              ),
-            ],
-          ),
-        ],
+                const Icon(
+                  CupertinoIcons.chevron_right,
+                  size: 15,
+                  color: AppColors.textSecondary,
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

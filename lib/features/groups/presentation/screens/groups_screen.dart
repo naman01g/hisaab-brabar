@@ -4,6 +4,8 @@ import '../../../../core/theme/app_colors.dart';
 import '../../domain/models/group.dart';
 import '../../domain/models/group_member.dart';
 import '../widgets/group_list_card.dart';
+import 'create_group_screen.dart';
+import 'group_details_screen.dart';
 
 class GroupsScreen extends StatefulWidget {
   const GroupsScreen({super.key});
@@ -19,6 +21,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
     'Trips',
     'College',
     'Hostel',
+    'Other',
   ];
 
   String selectedCategory = 'All';
@@ -32,7 +35,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
 
     groups = [
       _GroupEntry(
-        group: _createGroup(
+        group: _buildSampleGroup(
           id: 'flat_304',
           name: 'Flat 304 - Indiranagar',
           category: 'Flatmates',
@@ -45,9 +48,8 @@ class _GroupsScreenState extends State<GroupsScreen> {
         amountColor: AppColors.sageDark,
         iconBackground: AppColors.sage,
       ),
-
       _GroupEntry(
-        group: _createGroup(
+        group: _buildSampleGroup(
           id: 'manali_trek',
           name: 'Manali Trek Dec',
           category: 'Trips',
@@ -60,9 +62,8 @@ class _GroupsScreenState extends State<GroupsScreen> {
         amountColor: AppColors.primary,
         iconBackground: AppColors.secondary,
       ),
-
       _GroupEntry(
-        group: _createGroup(
+        group: _buildSampleGroup(
           id: 'cse_team',
           name: 'CSE Dept Core Team',
           category: 'College',
@@ -75,9 +76,8 @@ class _GroupsScreenState extends State<GroupsScreen> {
         amountColor: AppColors.sageDark,
         iconBackground: AppColors.sage,
       ),
-
       _GroupEntry(
-        group: _createGroup(
+        group: _buildSampleGroup(
           id: 'hostel_wing_b',
           name: 'Hostel Wing B Mess',
           category: 'Hostel',
@@ -93,16 +93,16 @@ class _GroupsScreenState extends State<GroupsScreen> {
     ];
   }
 
-  // Create sample group with sample members.
-  Group _createGroup({
+  // Create sample group data.
+  Group _buildSampleGroup({
     required String id,
     required String name,
     required String category,
     required int memberCount,
   }) {
-    final members = List.generate(memberCount, (index) {
-      final names = ['You', 'Aarav', 'Meera', 'Kabir'];
+    final names = ['You', 'Aarav', 'Meera', 'Kabir'];
 
+    final members = List.generate(memberCount, (index) {
       return GroupMember(
         userId: '${id}_user_$index',
         displayName: index < names.length
@@ -122,6 +122,60 @@ class _GroupsScreenState extends State<GroupsScreen> {
     );
   }
 
+  // Open group details.
+  Future<void> _openGroupDetails(_GroupEntry entry) async {
+    await Navigator.push<void>(
+      context,
+      CupertinoPageRoute(
+        builder: (context) => GroupDetailsScreen(
+          group: entry.group,
+          onGroupUpdated: _updateGroup,
+        ),
+      ),
+    );
+  }
+
+  // Update the group in the parent screen.
+  void _updateGroup(Group updatedGroup) {
+    final index = groups.indexWhere(
+      (entry) => entry.group.id == updatedGroup.id,
+    );
+
+    if (index == -1) return;
+
+    setState(() {
+      groups[index] = groups[index].copyWith(group: updatedGroup);
+    });
+  }
+
+  // Create a new group.
+  Future<void> _openCreateGroup() async {
+    final newGroup = await Navigator.push<Group>(
+      context,
+      CupertinoPageRoute(builder: (context) => const CreateGroupScreen()),
+    );
+
+    if (!mounted || newGroup == null) return;
+
+    setState(() {
+      groups.insert(
+        0,
+        _GroupEntry(
+          group: newGroup,
+          activity: 'Created just now',
+          amount: '—',
+          status: 'No expenses',
+          icon: CupertinoIcons.person_2,
+          amountColor: AppColors.textSecondary,
+          iconBackground: AppColors.secondary,
+        ),
+      );
+
+      selectedCategory = 'All';
+      searchQuery = '';
+    });
+  }
+
   // Search and category filtering.
   List<_GroupEntry> get filteredGroups {
     return groups.where((entry) {
@@ -129,31 +183,11 @@ class _GroupsScreenState extends State<GroupsScreen> {
           selectedCategory == 'All' || entry.group.category == selectedCategory;
 
       final matchesSearch = entry.group.name.toLowerCase().contains(
-        searchQuery.toLowerCase(),
+        searchQuery.trim().toLowerCase(),
       );
 
       return matchesCategory && matchesSearch;
     }).toList();
-  }
-
-  void _showCreateGroupMessage() {
-    showCupertinoDialog(
-      context: context,
-      builder: (context) {
-        return CupertinoAlertDialog(
-          title: const Text('Create Group'),
-          content: const Text(
-            'Group creation will be implemented in the next step.',
-          ),
-          actions: [
-            CupertinoDialogAction(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('OK'),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   @override
@@ -162,17 +196,15 @@ class _GroupsScreenState extends State<GroupsScreen> {
 
     return CupertinoPageScaffold(
       backgroundColor: AppColors.background,
-
       navigationBar: CupertinoNavigationBar(
         middle: const Text('Your Groups'),
         backgroundColor: AppColors.background.withValues(alpha: 0.9),
         trailing: CupertinoButton(
           padding: EdgeInsets.zero,
-          onPressed: _showCreateGroupMessage,
+          onPressed: _openCreateGroup,
           child: const Icon(CupertinoIcons.add, color: AppColors.primary),
         ),
       ),
-
       child: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(20),
@@ -191,9 +223,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
                     color: AppColors.primary,
                     size: 28,
                   ),
-
                   const SizedBox(width: 12),
-
                   const Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -217,14 +247,13 @@ class _GroupsScreenState extends State<GroupsScreen> {
                       ],
                     ),
                   ),
-
                   CupertinoButton.filled(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 14,
                       vertical: 8,
                     ),
                     borderRadius: BorderRadius.circular(12),
-                    onPressed: _showCreateGroupMessage,
+                    onPressed: _openCreateGroup,
                     child: const Text('Create'),
                   ),
                 ],
@@ -240,15 +269,13 @@ class _GroupsScreenState extends State<GroupsScreen> {
               borderRadius: BorderRadius.circular(14),
               padding: const EdgeInsets.all(12),
               onChanged: (value) {
-                setState(() {
-                  searchQuery = value;
-                });
+                setState(() => searchQuery = value);
               },
             ),
 
             const SizedBox(height: 18),
 
-            // Category Filters
+            // Categories
             SizedBox(
               height: 36,
               child: ListView(
@@ -303,7 +330,6 @@ class _GroupsScreenState extends State<GroupsScreen> {
                       ),
                     ],
                   ),
-
                   Text(
                     '₹6,400',
                     style: TextStyle(
@@ -318,7 +344,6 @@ class _GroupsScreenState extends State<GroupsScreen> {
 
             const SizedBox(height: 24),
 
-            // Groups Heading
             Text(
               selectedCategory == 'All' ? 'All Groups' : selectedCategory,
               style: const TextStyle(
@@ -330,7 +355,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
 
             const SizedBox(height: 14),
 
-            // Filtered Group Cards
+            // Group Cards
             if (visibleGroups.isEmpty)
               Container(
                 padding: const EdgeInsets.all(24),
@@ -377,6 +402,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
                     icon: entry.icon,
                     amountColor: entry.amountColor,
                     iconBackground: entry.iconBackground,
+                    onTap: () => _openGroupDetails(entry),
                   ),
                 );
               }),
@@ -387,7 +413,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
   }
 }
 
-// Group data shown in the UI.
+// Display information for each group card.
 class _GroupEntry {
   final Group group;
   final String activity;
@@ -406,6 +432,18 @@ class _GroupEntry {
     required this.amountColor,
     required this.iconBackground,
   });
+
+  _GroupEntry copyWith({Group? group}) {
+    return _GroupEntry(
+      group: group ?? this.group,
+      activity: activity,
+      amount: amount,
+      status: status,
+      icon: icon,
+      amountColor: amountColor,
+      iconBackground: iconBackground,
+    );
+  }
 }
 
 // Category Filter Widget
