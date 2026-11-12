@@ -1,175 +1,41 @@
 import 'package:flutter/cupertino.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../expenses/data/repositories/expense_repository.dart';
+import '../../../expenses/domain/models/expense.dart';
 import '../../domain/models/group.dart';
 import '../../domain/models/group_member.dart';
 
 class GroupDetailsScreen extends StatefulWidget {
   final Group group;
-  final ValueChanged<Group> onGroupUpdated;
 
-  const GroupDetailsScreen({
-    super.key,
-    required this.group,
-    required this.onGroupUpdated,
-  });
+  const GroupDetailsScreen({super.key, required this.group});
 
   @override
   State<GroupDetailsScreen> createState() => _GroupDetailsScreenState();
 }
 
 class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
-  late Group group;
+  late final Stream<List<Expense>> expensesStream;
 
   @override
   void initState() {
     super.initState();
-    group = widget.group;
+
+    expensesStream = ExpenseRepository().watchGroupExpenses(widget.group.id);
   }
 
-  void _updateMembers(List<GroupMember> members) {
-    final updatedGroup = Group(
-      id: group.id,
-      name: group.name,
-      category: group.category,
-      createdBy: group.createdBy,
-      createdAt: group.createdAt,
-      currencyCode: group.currencyCode,
-      members: members,
-    );
+  String _formatPaise(int paise) {
+    final rupees = paise ~/ 100;
+    final remaining = (paise % 100).toString().padLeft(2, '0');
 
-    setState(() {
-      group = updatedGroup;
-    });
-
-    widget.onGroupUpdated(updatedGroup);
-  }
-
-  Future<void> _addMember() async {
-    final controller = TextEditingController();
-
-    final name = await showCupertinoDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        return CupertinoAlertDialog(
-          title: const Text('Add Member'),
-          content: Padding(
-            padding: const EdgeInsets.only(top: 14),
-            child: CupertinoTextField(
-              controller: controller,
-              autofocus: true,
-              placeholder: 'Enter member name',
-            ),
-          ),
-          actions: [
-            CupertinoDialogAction(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            CupertinoDialogAction(
-              isDefaultAction: true,
-              onPressed: () {
-                Navigator.pop(dialogContext, controller.text.trim());
-              },
-              child: const Text('Add'),
-            ),
-          ],
-        );
-      },
-    );
-
-    controller.dispose();
-
-    if (!mounted || name == null) return;
-
-    if (name.isEmpty) {
-      _showMessage('Please enter a member name.');
-      return;
-    }
-
-    final alreadyExists = group.members.any(
-      (member) => member.displayName.toLowerCase() == name.toLowerCase(),
-    );
-
-    if (alreadyExists) {
-      _showMessage('This member is already in the group.');
-      return;
-    }
-
-    final newMember = GroupMember(
-      userId: 'local_${DateTime.now().microsecondsSinceEpoch}',
-      displayName: name,
-      role: GroupRole.member,
-    );
-
-    _updateMembers([...group.members, newMember]);
-  }
-
-  Future<void> _removeMember(GroupMember member) async {
-    if (member.userId == group.createdBy || member.role == GroupRole.owner) {
-      _showMessage('The group owner cannot be removed.');
-      return;
-    }
-
-    final confirmed = await showCupertinoDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return CupertinoAlertDialog(
-          title: const Text('Remove Member?'),
-          content: Text('Remove ${member.displayName} from this group?'),
-          actions: [
-            CupertinoDialogAction(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
-            ),
-            CupertinoDialogAction(
-              isDestructiveAction: true,
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Remove'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (!mounted || confirmed != true) return;
-
-    _updateMembers(
-      group.members.where((item) => item.userId != member.userId).toList(),
-    );
-  }
-
-  void _showMessage(String message) {
-    showCupertinoDialog(
-      context: context,
-      builder: (dialogContext) {
-        return CupertinoAlertDialog(
-          content: Text(message),
-          actions: [
-            CupertinoDialogAction(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('OK'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _sectionTitle(String title) {
-    return Text(
-      title,
-      style: const TextStyle(
-        fontSize: 17,
-        fontWeight: FontWeight.w700,
-        color: AppColors.textPrimary,
-      ),
-    );
+    return '₹$rupees.$remaining';
   }
 
   Widget _memberCard(GroupMember member) {
     final isOwner =
-        member.userId == group.createdBy || member.role == GroupRole.owner;
+        member.userId == widget.group.createdBy ||
+        member.role == GroupRole.owner;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -214,7 +80,7 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  isOwner ? 'Owner' : member.role.name.toUpperCase(),
+                  isOwner ? 'Owner' : 'Member',
                   style: const TextStyle(
                     fontSize: 11,
                     color: AppColors.textSecondary,
@@ -224,18 +90,7 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
             ),
           ),
 
-          if (!isOwner)
-            CupertinoButton(
-              padding: EdgeInsets.zero,
-              minSize: 36,
-              onPressed: () => _removeMember(member),
-              child: const Icon(
-                CupertinoIcons.minus_circle,
-                color: AppColors.error,
-                size: 21,
-              ),
-            )
-          else
+          if (isOwner)
             const Icon(
               CupertinoIcons.checkmark_seal_fill,
               color: AppColors.sageDark,
@@ -246,13 +101,82 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
     );
   }
 
+  Widget _expenseCard(Expense expense) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            height: 42,
+            width: 42,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(
+              color: AppColors.secondary,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              CupertinoIcons.doc_text,
+              color: AppColors.primary,
+            ),
+          ),
+
+          const SizedBox(width: 12),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  expense.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${expense.category} • Paid by ${expense.paidByName}',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(width: 8),
+
+          Text(
+            _formatPaise(expense.amountPaise),
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: AppColors.primary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final group = widget.group;
+
     return CupertinoPageScaffold(
       backgroundColor: AppColors.background,
-      navigationBar: CupertinoNavigationBar(
-        middle: const Text('Group Details'),
-        backgroundColor: AppColors.background.withValues(alpha: 0.9),
+      navigationBar: const CupertinoNavigationBar(
+        middle: Text('Group Details'),
       ),
       child: SafeArea(
         child: ListView(
@@ -299,39 +223,13 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
 
             const SizedBox(height: 28),
 
-            // Members heading and add button
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _sectionTitle('Members'),
-                CupertinoButton(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  color: AppColors.secondary,
-                  borderRadius: BorderRadius.circular(12),
-                  onPressed: _addMember,
-                  child: const Row(
-                    children: [
-                      Icon(
-                        CupertinoIcons.add,
-                        size: 16,
-                        color: AppColors.primary,
-                      ),
-                      SizedBox(width: 5),
-                      Text(
-                        'Add',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+            Text(
+              'Members (${group.memberCount})',
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
             ),
 
             const SizedBox(height: 14),
@@ -340,59 +238,63 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
 
             const SizedBox(height: 24),
 
-            // Group information
-            _sectionTitle('About Group'),
-            const SizedBox(height: 12),
-
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Column(
-                children: [
-                  _infoRow('Group ID', group.id),
-                  const SizedBox(height: 14),
-                  _infoRow('Category', group.category),
-                  const SizedBox(height: 14),
-                  _infoRow('Currency', group.currencyCode),
-                  const SizedBox(height: 14),
-                  _infoRow(
-                    'Created',
-                    '${group.createdAt.day}/${group.createdAt.month}/${group.createdAt.year}',
-                  ),
-                ],
+            const Text(
+              'Expense History',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
               ),
             ),
+
+            const SizedBox(height: 14),
+
+            StreamBuilder<List<Expense>>(
+              stream: expensesStream,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CupertinoActivityIndicator());
+                }
+
+                if (snapshot.hasError) {
+                  return Text(
+                    'Unable to load expenses: ${snapshot.error}',
+                    style: const TextStyle(
+                      color: AppColors.error,
+                      fontSize: 12,
+                    ),
+                  );
+                }
+
+                final expenses = snapshot.data ?? [];
+
+                if (expenses.isEmpty) {
+                  return Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: const Text(
+                      'No expenses in this group yet.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  );
+                }
+
+                return Column(children: expenses.map(_expenseCard).toList());
+              },
+            ),
+
+            const SizedBox(height: 24),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _infoRow(String title, String value) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          title,
-          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
-        ),
-        const SizedBox(width: 12),
-        Flexible(
-          child: Text(
-            value,
-            textAlign: TextAlign.right,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

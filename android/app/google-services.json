@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "10833816414",
+    "project_id": "hisaab-brabar",
+    "storage_bucket": "hisaab-brabar.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:10833816414:android:7550f6d5deed418e987dcf",
+        "android_client_info": {
+          "package_name": "com.example.hisaab_brabar"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "10833816414-72v1jrm8v9ih7t4lftdb7te830j4a4i9.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.hisaab_brabar",
+            "certificate_hash": "00ad37c65b8c4bb34dc00f1f291cbfc648d00c15"
+          }
+        },
+        {
+          "client_id": "10833816414-2sq3omnk3bk6sde5fqpd8i0o2fjf794f.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAN7xl5Z8ft15_WNHsvg7KikW4gjceneww"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "10833816414-2sq3omnk3bk6sde5fqpd8i0o2fjf794f.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "10833816414-dui3bji95tr3jdoeha46fqq6im2e94a8.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.hisaabBrabar"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

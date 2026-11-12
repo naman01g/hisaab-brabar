@@ -1,37 +1,67 @@
 import 'package:flutter/cupertino.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../data/repositories/expense_repository.dart';
+import '../../domain/models/expense.dart';
 
-class ExpenseReviewScreen extends StatelessWidget {
-  final String title;
-  final String category;
-  final String group;
-  final String payer;
-  final int amountPaise;
-  final Map<String, int> shares;
-  final String splitMethod;
+class ExpenseReviewScreen extends StatefulWidget {
+  final Expense expense;
+  final ExpenseRepository repository;
 
   const ExpenseReviewScreen({
     super.key,
-    required this.title,
-    required this.category,
-    required this.group,
-    required this.payer,
-    required this.amountPaise,
-    required this.shares,
-    required this.splitMethod,
+    required this.expense,
+    required this.repository,
   });
 
-  // Format paise as Indian rupees
-  String formatAmount(int paise) {
+  @override
+  State<ExpenseReviewScreen> createState() => _ExpenseReviewScreenState();
+}
+
+class _ExpenseReviewScreenState extends State<ExpenseReviewScreen> {
+  bool isSaving = false;
+  String? errorMessage;
+
+  String _formatPaise(int paise) {
     final rupees = paise ~/ 100;
     final remaining = (paise % 100).toString().padLeft(2, '0');
 
     return '₹$rupees.$remaining';
   }
 
-  // Reusable detail row
-  Widget _detailRow(String label, String value) {
+  Future<void> _saveExpense() async {
+    setState(() {
+      isSaving = true;
+      errorMessage = null;
+    });
+
+    try {
+      await widget.repository.createExpense(widget.expense);
+
+      if (!mounted) return;
+
+      Navigator.pop(context, true);
+    } on FirebaseException catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        errorMessage = error.message ?? error.code;
+      });
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        errorMessage = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() => isSaving = false);
+      }
+    }
+  }
+
+  Widget _infoRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 9),
       child: Row(
@@ -48,7 +78,7 @@ class ExpenseReviewScreen extends StatelessWidget {
           Flexible(
             child: Text(
               value,
-              textAlign: TextAlign.end,
+              textAlign: TextAlign.right,
               style: const TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
@@ -63,68 +93,80 @@ class ExpenseReviewScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final totalAllocated = shares.values.fold(0, (sum, share) => sum + share);
+    final expense = widget.expense;
 
     return CupertinoPageScaffold(
       backgroundColor: AppColors.background,
-
-      navigationBar: CupertinoNavigationBar(
-        middle: const Text('Review Expense'),
-        backgroundColor: AppColors.background.withValues(alpha: 0.9),
+      navigationBar: const CupertinoNavigationBar(
+        middle: Text('Review Expense'),
       ),
-
       child: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            // Amount Summary
             Container(
               padding: const EdgeInsets.all(22),
               decoration: BoxDecoration(
                 color: AppColors.secondary,
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(18),
               ),
               child: Column(
                 children: [
                   const Text(
-                    'TOTAL EXPENSE',
+                    'Total Expense',
                     style: TextStyle(
                       fontSize: 12,
-                      fontWeight: FontWeight.w600,
                       color: AppColors.textSecondary,
                     ),
                   ),
-
-                  const SizedBox(height: 10),
-
+                  const SizedBox(height: 8),
                   Text(
-                    formatAmount(amountPaise),
+                    _formatPaise(expense.amountPaise),
                     style: const TextStyle(
                       fontSize: 32,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.primary,
                     ),
                   ),
-
-                  const SizedBox(height: 8),
-
+                  const SizedBox(height: 6),
                   Text(
-                    title,
-                    textAlign: TextAlign.center,
+                    expense.title,
                     style: const TextStyle(
-                      fontSize: 14,
-                      color: AppColors.textSecondary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
                     ),
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(height: 28),
+            const SizedBox(height: 24),
 
-            // Expense Details
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                children: [
+                  _infoRow('Group', expense.groupName),
+                  _infoRow('Category', expense.category),
+                  _infoRow('Paid by', expense.paidByName),
+                  _infoRow(
+                    'Split method',
+                    expense.splitType.name.toUpperCase(),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
             const Text(
-              'Expense Details',
+              'Share Breakdown',
               style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
@@ -134,71 +176,32 @@ class ExpenseReviewScreen extends StatelessWidget {
 
             const SizedBox(height: 12),
 
-            _detailRow('Category', category),
-            _detailRow('Group', group),
-            _detailRow('Paid By', payer),
-            _detailRow('Split Method', splitMethod),
-
-            const SizedBox(height: 28),
-
-            // Split Breakdown
-            const Text(
-              'Split Breakdown',
-              style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary,
-              ),
-            ),
-
-            const SizedBox(height: 14),
-
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: AppColors.surface,
-                borderRadius: BorderRadius.circular(18),
+                borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: AppColors.border),
               ),
               child: Column(
                 children: [
-                  ...shares.entries.map((entry) {
+                  ...expense.sharesPaise.entries.map((entry) {
                     return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
                       child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Container(
-                            width: 38,
-                            height: 38,
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: AppColors.sage,
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              entry.key[0].toUpperCase(),
-                              style: const TextStyle(
-                                color: AppColors.sageDark,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(width: 12),
-
-                          Expanded(
-                            child: Text(
-                              entry.key,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                color: AppColors.textPrimary,
-                              ),
-                            ),
-                          ),
-
                           Text(
-                            formatAmount(entry.value),
+                            expense.participantNames[entry.key] ?? 'Member',
                             style: const TextStyle(
+                              fontSize: 13,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          Text(
+                            _formatPaise(entry.value),
+                            style: const TextStyle(
+                              fontSize: 13,
                               fontWeight: FontWeight.w700,
                               color: AppColors.primary,
                             ),
@@ -214,61 +217,40 @@ class ExpenseReviewScreen extends StatelessWidget {
                     margin: const EdgeInsets.symmetric(vertical: 10),
                   ),
 
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Total allocated',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
-                        ),
+                  _infoRow(
+                    'Total allocated',
+                    _formatPaise(
+                      expense.sharesPaise.values.fold<int>(
+                        0,
+                        (total, share) => total + share,
                       ),
-
-                      Text(
-                        formatAmount(totalAllocated),
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: totalAllocated == amountPaise
-                              ? AppColors.sageDark
-                              : AppColors.error,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ],
               ),
             ),
 
+            if (errorMessage != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                errorMessage!,
+                style: const TextStyle(fontSize: 12, color: AppColors.error),
+              ),
+            ],
+
             const SizedBox(height: 24),
 
-            // Prototype notice
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppColors.sage,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Text(
-                'Please review the details carefully. Saving expenses will be implemented in a later step.',
-                style: TextStyle(fontSize: 12, color: AppColors.sageDark),
-              ),
+            CupertinoButton.filled(
+              borderRadius: BorderRadius.circular(14),
+              onPressed: isSaving ? null : _saveExpense,
+              child: isSaving
+                  ? const CupertinoActivityIndicator(
+                      color: CupertinoColors.white,
+                    )
+                  : const Text('Save & Split Expense'),
             ),
 
             const SizedBox(height: 20),
-
-            CupertinoButton(
-              borderRadius: BorderRadius.circular(14),
-              color: AppColors.primary,
-              onPressed: () {
-                Navigator.pop(context);
-              },
-              child: const Text(
-                'Back to Edit',
-                style: TextStyle(color: AppColors.surface),
-              ),
-            ),
           ],
         ),
       ),

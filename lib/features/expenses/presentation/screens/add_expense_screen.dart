@@ -1,10 +1,14 @@
 import 'package:flutter/cupertino.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../groups/data/repositories/group_repository.dart';
+import '../../../groups/domain/models/group.dart';
+import '../../../groups/domain/models/group_member.dart';
+import '../../data/repositories/expense_repository.dart';
 import '../../domain/models/expense.dart';
-import 'expense_review_screen.dart';
-
 import '../../domain/services/split_calculator.dart';
+import 'expense_review_screen.dart';
 
 class AddExpenseScreen extends StatefulWidget {
   const AddExpenseScreen({super.key});
@@ -14,54 +18,32 @@ class AddExpenseScreen extends StatefulWidget {
 }
 
 class _AddExpenseScreenState extends State<AddExpenseScreen> {
-  // Selected values
+  final groupRepository = GroupRepository();
+
+  final expenseRepository = ExpenseRepository();
+
+  late final Stream<List<Group>> groupsStream;
+
+  final amountController = TextEditingController();
+  final titleController = TextEditingController();
+
+  final categories = ['Food', 'Travel', 'Shopping', 'Bills', 'Other'];
+
+  final Map<String, TextEditingController> exactControllers = {};
+  final Map<String, TextEditingController> percentageControllers = {};
+
   String selectedCategory = 'Food';
-  String? selectedGroup;
-  String selectedPayer = 'You';
+  Group? selectedGroup;
+  String? selectedPayerId;
+
+  final Set<String> selectedParticipants = {};
+
   SplitType splitType = SplitType.equal;
-
-  // Text controllers
-  final TextEditingController amountController = TextEditingController();
-  final TextEditingController titleController = TextEditingController();
-
-  // Sample categories
-  final List<String> categories = [
-    'Food',
-    'Travel',
-    'Shopping',
-    'Bills',
-    'Other',
-  ];
-
-  // Sample groups
-  final List<String> groups = [
-    'Flat 402 Boys & Girls',
-    'Goa Summer Getaway',
-    'College Fest SOS',
-    'Hostel Wing B',
-  ];
-
-  // Sample group members
-  final List<String> members = ['You', 'Aarav', 'Meera', 'Kabir'];
-
-  // Selected participants
-  final Set<String> selectedParticipants = {'You', 'Aarav', 'Meera', 'Kabir'};
-
-  // Controllers for custom splits
-  late final Map<String, TextEditingController> exactControllers;
-  late final Map<String, TextEditingController> percentageControllers;
 
   @override
   void initState() {
     super.initState();
-
-    exactControllers = {
-      for (final member in members) member: TextEditingController(),
-    };
-
-    percentageControllers = {
-      for (final member in members) member: TextEditingController(),
-    };
+    groupsStream = groupRepository.watchMyGroups();
   }
 
   @override
@@ -80,7 +62,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     super.dispose();
   }
 
-  // Convert rupees into integer paise
+  // Convert rupees into integer paise.
   int? _parsePaise(String value) {
     final input = value.trim().replaceAll(',', '');
 
@@ -93,12 +75,11 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
 
     if (rupees == null) return null;
 
-    final paiseText = parts.length > 1 ? parts[1].padRight(2, '0') : '00';
+    final paise = parts.length > 1 ? parts[1].padRight(2, '0') : '00';
 
-    return rupees * 100 + int.parse(paiseText);
+    return rupees * 100 + int.parse(paise);
   }
 
-  // Convert integer paise into rupees for display
   String _formatPaise(int paise) {
     final rupees = paise ~/ 100;
     final remaining = (paise % 100).toString().padLeft(2, '0');
@@ -106,86 +87,23 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     return '₹$rupees.$remaining';
   }
 
-  // Calculate percentage total in basis points
-  int _percentageTotal() {
-    return selectedParticipants.fold(0, (total, member) {
-      final percentage = int.tryParse(
-        percentageControllers[member]!.text.trim(),
+  void _initializeMemberControllers(Group group) {
+    for (final member in group.members) {
+      exactControllers.putIfAbsent(
+        member.userId,
+        () => TextEditingController(),
       );
 
-      return total + (percentage ?? 0) * 100;
-    });
-  }
-
-  // Calculate shares
-
-  Map<String, int> _calculateShares() {
-    final total = _parsePaise(amountController.text);
-
-    if (total == null || total <= 0 || selectedParticipants.isEmpty) {
-      return {};
-    }
-
-    final participants = selectedParticipants.toList()..sort();
-
-    try {
-      switch (splitType) {
-        case SplitType.equal:
-          return SplitCalculator.equal(
-            totalPaise: total,
-            participants: participants,
-          );
-
-        case SplitType.exact:
-          final exactShares = <String, int>{};
-
-          for (final member in participants) {
-            final share = _parsePaise(exactControllers[member]!.text);
-
-            if (share == null) {
-              return {};
-            }
-
-            exactShares[member] = share;
-          }
-
-          return SplitCalculator.exact(
-            totalPaise: total,
-            participants: participants,
-            sharesPaise: exactShares,
-          );
-
-        case SplitType.percentage:
-          final percentages = <String, int>{};
-
-          for (final member in participants) {
-            final value = int.tryParse(
-              percentageControllers[member]!.text.trim(),
-            );
-
-            if (value == null) {
-              return {};
-            }
-
-            // Convert percentage into basis points.
-            percentages[member] = value * 100;
-          }
-
-          return SplitCalculator.percentage(
-            totalPaise: total,
-            participants: participants,
-            percentagesBasisPoints: percentages,
-          );
-      }
-    } on ArgumentError {
-      // Invalid or incomplete split details.
-      // The UI will show an empty preview until corrected.
-      return {};
+      percentageControllers.putIfAbsent(
+        member.userId,
+        () => TextEditingController(),
+      );
     }
   }
 
-  // Show group selection
-  void _showGroupPicker() {
+  void _selectGroup(List<Group> groups) {
+    if (groups.isEmpty) return;
+
     showCupertinoModalPopup(
       context: context,
       builder: (context) {
@@ -195,13 +113,33 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
           actions: groups.map((group) {
             return CupertinoActionSheetAction(
               onPressed: () {
+                _initializeMemberControllers(group);
+
                 setState(() {
                   selectedGroup = group;
+                  selectedParticipants
+                    ..clear()
+                    ..addAll(group.members.map((member) => member.userId));
+
+                  final currentUid = FirebaseAuth.instance.currentUser?.uid;
+
+                  selectedPayerId =
+                      group.members.any((member) => member.userId == currentUid)
+                      ? currentUid
+                      : group.members.first.userId;
+
+                  for (final controller in exactControllers.values) {
+                    controller.clear();
+                  }
+
+                  for (final controller in percentageControllers.values) {
+                    controller.clear();
+                  }
                 });
 
                 Navigator.pop(context);
               },
-              child: Text(group),
+              child: Text(group.name),
             );
           }).toList(),
           cancelButton: CupertinoActionSheetAction(
@@ -213,23 +151,26 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     );
   }
 
-  // Show payer selection
-  void _showPayerPicker() {
+  void _selectPayer() {
+    final group = selectedGroup;
+
+    if (group == null) return;
+
     showCupertinoModalPopup(
       context: context,
       builder: (context) {
         return CupertinoActionSheet(
           title: const Text('Who paid?'),
-          actions: members.map((member) {
+          actions: group.members.map((member) {
             return CupertinoActionSheetAction(
               onPressed: () {
                 setState(() {
-                  selectedPayer = member;
+                  selectedPayerId = member.userId;
                 });
 
                 Navigator.pop(context);
               },
-              child: Text(member),
+              child: Text(member.displayName),
             );
           }).toList(),
           cancelButton: CupertinoActionSheetAction(
@@ -241,20 +182,86 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     );
   }
 
-  // Select or deselect participants
-  void _toggleParticipant(String member) {
+  void _toggleParticipant(String userId) {
     setState(() {
-      if (selectedParticipants.contains(member)) {
+      if (selectedParticipants.contains(userId)) {
         if (selectedParticipants.length > 1) {
-          selectedParticipants.remove(member);
+          selectedParticipants.remove(userId);
         }
       } else {
-        selectedParticipants.add(member);
+        selectedParticipants.add(userId);
       }
     });
   }
 
-  // Show validation error
+  int _percentageTotal() {
+    return selectedParticipants.fold<int>(0, (total, userId) {
+      final value = int.tryParse(
+        percentageControllers[userId]?.text.trim() ?? '',
+      );
+
+      return total + (value ?? 0) * 100;
+    });
+  }
+
+  Map<String, int> _calculateShares(int totalPaise) {
+    final group = selectedGroup;
+
+    if (group == null || selectedParticipants.isEmpty) {
+      return {};
+    }
+
+    final participants = selectedParticipants.toList()..sort();
+
+    try {
+      switch (splitType) {
+        case SplitType.equal:
+          return SplitCalculator.equal(
+            totalPaise: totalPaise,
+            participants: participants,
+          );
+
+        case SplitType.exact:
+          final shares = <String, int>{};
+
+          for (final userId in participants) {
+            final value = _parsePaise(exactControllers[userId]?.text ?? '');
+
+            if (value == null) return {};
+
+            shares[userId] = value;
+          }
+
+          return SplitCalculator.exact(
+            totalPaise: totalPaise,
+            participants: participants,
+            sharesPaise: shares,
+          );
+
+        case SplitType.percentage:
+          final percentages = <String, int>{};
+
+          for (final userId in participants) {
+            final value = int.tryParse(
+              percentageControllers[userId]?.text.trim() ?? '',
+            );
+
+            if (value == null) return {};
+
+            percentages[userId] = value * 100;
+          }
+
+          return SplitCalculator.percentage(
+            totalPaise: totalPaise,
+            participants: participants,
+            percentagesBasisPoints: percentages,
+          );
+      }
+    } on ArgumentError {
+      return {};
+    }
+  }
+
   void _showError(String message) {
     showCupertinoDialog(
       context: context,
@@ -273,32 +280,38 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     );
   }
 
-  // Create Expense model and navigate to review screen
-  void _reviewExpense() {
+  Future<void> _reviewExpense() async {
+    final group = selectedGroup;
     final total = _parsePaise(amountController.text);
     final title = titleController.text.trim();
+    final currentUser = FirebaseAuth.instance.currentUser;
 
-    if (total == null || total <= 0) {
-      _showError('Please enter a valid expense amount.');
+    if (currentUser == null) {
+      _showError('Please sign in first.');
       return;
     }
 
-    if (title.isEmpty) {
-      _showError('Please enter an expense title.');
-      return;
-    }
-
-    if (selectedGroup == null) {
+    if (group == null) {
       _showError('Please select a group.');
       return;
     }
 
-    if (selectedParticipants.isEmpty) {
-      _showError('Please select participants.');
+    if (total == null || total <= 0) {
+      _showError('Enter a valid expense amount.');
       return;
     }
 
-    final shares = _calculateShares();
+    if (title.isEmpty) {
+      _showError('Enter an expense title.');
+      return;
+    }
+
+    if (selectedPayerId == null) {
+      _showError('Select who paid for this expense.');
+      return;
+    }
+
+    final shares = _calculateShares(total);
 
     final allocated = shares.values.fold<int>(0, (sum, share) => sum + share);
 
@@ -309,39 +322,60 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       return;
     }
 
-    // Create our Expense object
-    final now = DateTime.now();
+    final membersById = {
+      for (final member in group.members) member.userId: member,
+    };
+
+    final payer = membersById[selectedPayerId];
+
+    if (payer == null) {
+      _showError('The selected payer is not in this group.');
+      return;
+    }
+
+    final participantNames = <String, String>{
+      for (final userId in selectedParticipants)
+        userId: membersById[userId]!.displayName,
+    };
 
     final expense = Expense(
-      id: now.microsecondsSinceEpoch.toString(),
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      groupId: group.id,
+      groupName: group.name,
       title: title,
       category: selectedCategory,
-      group: selectedGroup!,
-      paidBy: selectedPayer,
+      createdBy: currentUser.uid,
+      paidByUserId: payer.userId,
+      paidByName: payer.displayName,
       amountPaise: total,
       sharesPaise: shares,
+      participantNames: participantNames,
       splitType: splitType,
-      createdAt: now,
+      createdAt: DateTime.now(),
     );
 
-    // Send expense details to review screen
-    Navigator.push(
+    final saved = await Navigator.push<bool>(
       context,
       CupertinoPageRoute(
         builder: (context) => ExpenseReviewScreen(
-          title: expense.title,
-          category: expense.category,
-          group: expense.group,
-          payer: expense.paidBy,
-          amountPaise: expense.amountPaise,
-          shares: expense.sharesPaise,
-          splitMethod: expense.splitType.name.toUpperCase(),
+          expense: expense,
+          repository: expenseRepository,
         ),
       ),
     );
+
+    if (!mounted || saved != true) return;
+
+    setState(() {
+      amountController.clear();
+      titleController.clear();
+      selectedCategory = 'Food';
+      splitType = SplitType.equal;
+    });
+
+    _showError('Expense saved successfully!');
   }
 
-  // Section heading
   Widget _sectionTitle(String title) {
     return Text(
       title,
@@ -353,7 +387,6 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     );
   }
 
-  // Reusable selection field
   Widget _selectionField({
     required String title,
     required IconData icon,
@@ -378,7 +411,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                 title,
                 style: TextStyle(
                   fontSize: 14,
-                  color: title == 'Choose a group'
+                  color: title.startsWith('Choose')
                       ? AppColors.textSecondary
                       : AppColors.textPrimary,
                 ),
@@ -395,18 +428,15 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     );
   }
 
-  // Exact or percentage input
-  Widget _buildShareInput(String member) {
+  Widget _buildShareInput(GroupMember member) {
     final isExact = splitType == SplitType.exact;
-
-    final controller = isExact
-        ? exactControllers[member]!
-        : percentageControllers[member]!;
 
     return SizedBox(
       width: 105,
       child: CupertinoTextField(
-        controller: controller,
+        controller: isExact
+            ? exactControllers[member.userId]
+            : percentageControllers[member.userId],
         keyboardType: TextInputType.numberWithOptions(decimal: isExact),
         textAlign: TextAlign.right,
         placeholder: isExact ? '0.00' : '0',
@@ -431,21 +461,20 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     );
   }
 
-  // Participant row
-  Widget _buildParticipantRow(String member) {
-    final isSelected = selectedParticipants.contains(member);
+  Widget _buildParticipantRow(GroupMember member) {
+    final selected = selectedParticipants.contains(member.userId);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: isSelected
+          color: selected
               ? AppColors.secondary.withValues(alpha: 0.5)
               : AppColors.surface,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: isSelected ? AppColors.primaryLight : AppColors.border,
+            color: selected ? AppColors.primaryLight : AppColors.border,
           ),
         ),
         child: Row(
@@ -453,7 +482,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
             Expanded(
               child: CupertinoButton(
                 padding: EdgeInsets.zero,
-                onPressed: () => _toggleParticipant(member),
+                onPressed: () => _toggleParticipant(member.userId),
                 child: Row(
                   children: [
                     Container(
@@ -465,7 +494,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                         color: AppColors.sage,
                       ),
                       child: Text(
-                        member[0],
+                        member.displayName[0].toUpperCase(),
                         style: const TextStyle(
                           fontWeight: FontWeight.w700,
                           color: AppColors.sageDark,
@@ -475,7 +504,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        member,
+                        member.displayName,
                         style: const TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
@@ -484,10 +513,10 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                       ),
                     ),
                     Icon(
-                      isSelected
+                      selected
                           ? CupertinoIcons.checkmark_circle_fill
                           : CupertinoIcons.circle,
-                      color: isSelected
+                      color: selected
                           ? AppColors.primary
                           : AppColors.textSecondary,
                       size: 21,
@@ -496,7 +525,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                 ),
               ),
             ),
-            if (isSelected && splitType != SplitType.equal) ...[
+            if (selected && splitType != SplitType.equal) ...[
               const SizedBox(width: 8),
               _buildShareInput(member),
             ],
@@ -506,53 +535,46 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     );
   }
 
-  // Split preview
-  Widget _buildSplitPreview() {
-    final total = _parsePaise(amountController.text);
+  Widget _buildSplitPreview(int total) {
+    if (splitType == SplitType.percentage && _percentageTotal() != 10000) {
+      return Text(
+        'Percentages must total 100%. Current: ${_percentageTotal() ~/ 100}%',
+        style: const TextStyle(fontSize: 12, color: AppColors.error),
+      );
+    }
 
-    if (total == null || total <= 0) {
+    final shares = _calculateShares(total);
+
+    if (shares.length != selectedParticipants.length) {
       return const Text(
-        'Enter an amount to see the split breakdown.',
+        'Enter valid split amounts to see the breakdown.',
         style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
       );
     }
 
-    if (selectedParticipants.isEmpty) {
-      return const Text('Select at least one participant.');
-    }
+    final members = {
+      for (final member in selectedGroup!.members) member.userId: member,
+    };
 
-    if (splitType == SplitType.percentage && _percentageTotal() != 10000) {
-      return Text(
-        'Percentages must total 100%. Currently: '
-        '${_percentageTotal() ~/ 100}%',
-        style: const TextStyle(color: AppColors.error, fontSize: 12),
-      );
-    }
-
-    final shares = _calculateShares();
-
-    final allocated = shares.values.fold<int>(0, (sum, value) => sum + value);
-
-    final participantList = selectedParticipants.toList()..sort();
+    final allocated = shares.values.fold<int>(0, (sum, share) => sum + share);
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ...participantList.map((member) {
+        ...shares.entries.map((entry) {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  member,
+                  members[entry.key]!.displayName,
                   style: const TextStyle(
                     fontSize: 13,
                     color: AppColors.textPrimary,
                   ),
                 ),
                 Text(
-                  _formatPaise(shares[member] ?? 0),
+                  _formatPaise(entry.value),
                   style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
@@ -563,13 +585,11 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
             ),
           );
         }),
-
         Container(
           height: 1,
           color: AppColors.border,
           margin: const EdgeInsets.symmetric(vertical: 8),
         ),
-
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -585,7 +605,6 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               _formatPaise(allocated),
               style: TextStyle(
                 fontWeight: FontWeight.w700,
-                fontSize: 14,
                 color: allocated == total
                     ? AppColors.sageDark
                     : AppColors.error,
@@ -593,248 +612,192 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
             ),
           ],
         ),
-
-        if (allocated != total)
-          const Padding(
-            padding: EdgeInsets.only(top: 8),
-            child: Text(
-              'Your shares must add up exactly to the expense amount.',
-              style: TextStyle(fontSize: 11, color: AppColors.error),
-            ),
-          ),
       ],
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return CupertinoPageScaffold(
-      backgroundColor: AppColors.background,
-      navigationBar: CupertinoNavigationBar(
-        middle: const Text('Add Expense'),
-        backgroundColor: AppColors.background.withValues(alpha: 0.9),
-      ),
-      child: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            // Amount
-            _sectionTitle('How much did you spend?'),
-            const SizedBox(height: 14),
+  Widget _buildForm(List<Group> groups) {
+    final group = selectedGroup;
+    final total = _parsePaise(amountController.text);
 
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: AppColors.secondary,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: CupertinoTextField(
-                controller: amountController,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                placeholder: '0.00',
-                prefix: const Padding(
-                  padding: EdgeInsets.only(left: 12),
-                  child: Text(
-                    '₹',
-                    style: TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                ),
-                style: const TextStyle(
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        _sectionTitle('How much did you spend?'),
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: AppColors.secondary,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: CupertinoTextField(
+            controller: amountController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            placeholder: '0.00',
+            prefix: const Padding(
+              padding: EdgeInsets.only(left: 12),
+              child: Text(
+                '₹',
+                style: TextStyle(
                   fontSize: 32,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.primary,
                 ),
-                decoration: const BoxDecoration(),
-                padding: const EdgeInsets.all(8),
-                onChanged: (_) => setState(() {}),
               ),
             ),
-
-            const SizedBox(height: 28),
-
-            // Expense title
-            _sectionTitle('What was it for?'),
-            const SizedBox(height: 12),
-
-            CupertinoTextField(
-              controller: titleController,
-              placeholder: 'e.g. Dinner with friends',
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.border),
-              ),
+            style: const TextStyle(
+              fontSize: 32,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
             ),
+            decoration: const BoxDecoration(),
+            padding: const EdgeInsets.all(8),
+            onChanged: (_) => setState(() {}),
+          ),
+        ),
 
-            const SizedBox(height: 28),
+        const SizedBox(height: 28),
 
-            // Category
-            _sectionTitle('Choose Category'),
-            const SizedBox(height: 12),
+        _sectionTitle('What was it for?'),
+        const SizedBox(height: 12),
+        CupertinoTextField(
+          controller: titleController,
+          placeholder: 'e.g. Dinner with friends',
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.border),
+          ),
+        ),
 
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: categories.map((category) {
-                final isSelected = selectedCategory == category;
+        const SizedBox(height: 28),
 
-                return CupertinoButton(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 8,
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                  color: isSelected ? AppColors.secondary : AppColors.surface,
-                  onPressed: () {
-                    setState(() {
-                      selectedCategory = category;
-                    });
-                  },
-                  child: Text(
-                    category,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: isSelected
-                          ? AppColors.primary
-                          : AppColors.textSecondary,
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
+        _sectionTitle('Choose Category'),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: categories.map((category) {
+            final selected = selectedCategory == category;
 
-            const SizedBox(height: 28),
-
-            // Group
-            _sectionTitle('Select Group'),
-            const SizedBox(height: 12),
-
-            _selectionField(
-              title: selectedGroup ?? 'Choose a group',
-              icon: CupertinoIcons.person_2,
-              onPressed: _showGroupPicker,
-            ),
-
-            const SizedBox(height: 28),
-
-            // Payer
-            _sectionTitle('Paid By'),
-            const SizedBox(height: 12),
-
-            _selectionField(
-              title: selectedPayer,
-              icon: CupertinoIcons.person,
-              onPressed: _showPayerPicker,
-            ),
-
-            const SizedBox(height: 28),
-
-            // Participants
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _sectionTitle('Split Between'),
-                Text(
-                  '${selectedParticipants.length} selected',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 6),
-
-            const Text(
-              'Select everyone sharing this expense.',
-              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-            ),
-
-            const SizedBox(height: 12),
-
-            ...members.map(_buildParticipantRow),
-
-            const SizedBox(height: 24),
-
-            // Split method
-            _sectionTitle('Split Method'),
-            const SizedBox(height: 12),
-
-            CupertinoSlidingSegmentedControl<SplitType>(
-              groupValue: splitType,
-              backgroundColor: AppColors.border,
-              thumbColor: AppColors.surface,
-              children: <SplitType, Widget>{
-                SplitType.equal: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Text(
-                    'Equal',
-                    style: TextStyle(
-                      color: splitType == SplitType.equal
-                          ? AppColors.primary
-                          : AppColors.textSecondary,
-                    ),
-                  ),
-                ),
-                SplitType.exact: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Text(
-                    'Exact',
-                    style: TextStyle(
-                      color: splitType == SplitType.exact
-                          ? AppColors.primary
-                          : AppColors.textSecondary,
-                    ),
-                  ),
-                ),
-                SplitType.percentage: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Text(
-                    '%',
-                    style: TextStyle(
-                      color: splitType == SplitType.percentage
-                          ? AppColors.primary
-                          : AppColors.textSecondary,
-                    ),
-                  ),
-                ),
+            return CupertinoButton(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+              borderRadius: BorderRadius.circular(20),
+              color: selected ? AppColors.secondary : AppColors.surface,
+              onPressed: () {
+                setState(() => selectedCategory = category);
               },
-              onValueChanged: (value) {
-                if (value == null) return;
-
-                setState(() {
-                  splitType = value;
-                });
-              },
-            ),
-
-            const SizedBox(height: 12),
-
-            Text(
-              splitType == SplitType.equal
-                  ? 'The amount is divided equally between selected members.'
-                  : splitType == SplitType.exact
-                  ? 'Enter the exact rupee amount for each member.'
-                  : 'Enter each member’s percentage. Total must be 100%.',
-              style: const TextStyle(
-                fontSize: 12,
-                color: AppColors.textSecondary,
+              child: Text(
+                category,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? AppColors.primary : AppColors.textSecondary,
+                ),
               ),
+            );
+          }).toList(),
+        ),
+
+        const SizedBox(height: 28),
+
+        _sectionTitle('Select Group'),
+        const SizedBox(height: 12),
+        _selectionField(
+          title: group?.name ?? 'Choose a group',
+          icon: CupertinoIcons.person_2,
+          onPressed: () => _selectGroup(groups),
+        ),
+
+        const SizedBox(height: 28),
+
+        if (group != null) ...[
+          _sectionTitle('Paid By'),
+          const SizedBox(height: 12),
+          _selectionField(
+            title: group.members
+                .firstWhere((member) => member.userId == selectedPayerId)
+                .displayName,
+            icon: CupertinoIcons.person,
+            onPressed: _selectPayer,
+          ),
+
+          const SizedBox(height: 28),
+
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _sectionTitle('Split Between'),
+              Text(
+                '${selectedParticipants.length} selected',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 6),
+
+          const Text(
+            'Select everyone sharing this expense.',
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          ),
+
+          const SizedBox(height: 12),
+
+          ...group.members.map(_buildParticipantRow),
+
+          const SizedBox(height: 24),
+
+          _sectionTitle('Split Method'),
+          const SizedBox(height: 12),
+
+          CupertinoSlidingSegmentedControl<SplitType>(
+            groupValue: splitType,
+            backgroundColor: AppColors.border,
+            thumbColor: AppColors.surface,
+            children: {
+              SplitType.equal: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Text('Equal'),
+              ),
+              SplitType.exact: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Text('Exact'),
+              ),
+              SplitType.percentage: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Text('%'),
+              ),
+            },
+            onValueChanged: (value) {
+              if (value == null) return;
+              setState(() => splitType = value);
+            },
+          ),
+
+          const SizedBox(height: 12),
+
+          Text(
+            splitType == SplitType.equal
+                ? 'Divide the amount equally.'
+                : splitType == SplitType.exact
+                ? 'Enter each member’s exact amount.'
+                : 'Enter each member’s percentage. Total must be 100%.',
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
             ),
+          ),
 
-            const SizedBox(height: 20),
+          const SizedBox(height: 20),
 
-            // Split breakdown
+          if (total != null && total > 0)
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -854,22 +817,67 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  _buildSplitPreview(),
+                  _buildSplitPreview(total),
                 ],
               ),
             ),
 
-            const SizedBox(height: 24),
+          const SizedBox(height: 24),
 
-            // Review button
-            CupertinoButton.filled(
-              borderRadius: BorderRadius.circular(14),
-              onPressed: _reviewExpense,
-              child: const Text('Review Expense'),
-            ),
+          CupertinoButton.filled(
+            borderRadius: BorderRadius.circular(14),
+            onPressed: _reviewExpense,
+            child: const Text('Review Expense'),
+          ),
+        ],
 
-            const SizedBox(height: 20),
-          ],
+        if (group == null) ...[
+          const SizedBox(height: 16),
+          const Text(
+            'Select a group to choose its members and split the expense.',
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          ),
+        ],
+
+        const SizedBox(height: 20),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CupertinoPageScaffold(
+      backgroundColor: AppColors.background,
+      navigationBar: CupertinoNavigationBar(
+        middle: const Text('Add Expense'),
+        backgroundColor: AppColors.background.withValues(alpha: 0.9),
+      ),
+      child: SafeArea(
+        child: StreamBuilder<List<Group>>(
+          stream: groupsStream,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CupertinoActivityIndicator());
+            }
+
+            if (snapshot.hasError) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    'Unable to load groups: ${snapshot.error}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: AppColors.error,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            return _buildForm(snapshot.data ?? []);
+          },
         ),
       ),
     );

@@ -1,8 +1,8 @@
 import 'package:flutter/cupertino.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 import '../../../../core/theme/app_colors.dart';
-import '../../domain/models/group.dart';
-import '../../domain/models/group_member.dart';
+import '../../data/repositories/group_repository.dart';
 
 class CreateGroupScreen extends StatefulWidget {
   const CreateGroupScreen({super.key});
@@ -13,16 +13,17 @@ class CreateGroupScreen extends StatefulWidget {
 
 class _CreateGroupScreenState extends State<CreateGroupScreen> {
   final nameController = TextEditingController();
-  final membersController = TextEditingController();
+  final repository = GroupRepository();
 
   final categories = ['Flatmates', 'Trips', 'College', 'Hostel', 'Other'];
 
   String selectedCategory = 'Flatmates';
+  bool isLoading = false;
+  String? errorMessage;
 
   @override
   void dispose() {
     nameController.dispose();
-    membersController.dispose();
     super.dispose();
   }
 
@@ -48,89 +49,42 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     );
   }
 
-  void _createGroup() {
+  Future<void> _createGroup() async {
     final name = nameController.text.trim();
 
-    final memberNames = membersController.text
-        .split(RegExp(r'[\n,]'))
-        .map((name) => name.trim())
-        .where((name) => name.isNotEmpty)
-        .toList();
-
     if (name.isEmpty) {
-      _showError('Please enter a group name.');
+      setState(() => errorMessage = 'Please enter a group name.');
       return;
     }
 
-    final normalizedNames = memberNames
-        .map((name) => name.toLowerCase())
-        .toList();
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
 
-    if (normalizedNames.contains('you') ||
-        normalizedNames.toSet().length != normalizedNames.length) {
-      _showError('Remove duplicate names. "You" is already included.');
-      return;
+    try {
+      await repository.createGroup(name: name, category: selectedCategory);
+
+      if (!mounted) return;
+
+      Navigator.pop(context, true);
+    } on FirebaseException catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        errorMessage = 'Firebase error: ${error.message ?? error.code}';
+      });
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        errorMessage = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() => isLoading = false);
+      }
     }
-
-    final now = DateTime.now();
-    final groupId = now.microsecondsSinceEpoch.toString();
-
-    const ownerId = 'local_current_user';
-
-    final members = [
-      GroupMember(
-        userId: ownerId,
-        displayName: 'You',
-        role: GroupRole.owner,
-        joinedAt: now,
-      ),
-      ...memberNames.asMap().entries.map((entry) {
-        return GroupMember(
-          userId: '${groupId}_member_${entry.key}',
-          displayName: entry.value,
-          role: GroupRole.member,
-          joinedAt: now,
-        );
-      }),
-    ];
-
-    final group = Group(
-      id: groupId,
-      name: name,
-      category: selectedCategory,
-      createdBy: ownerId,
-      createdAt: now,
-      members: members,
-    );
-
-    Navigator.pop(context, group);
-  }
-
-  void _showError(String message) {
-    showCupertinoDialog(
-      context: context,
-      builder: (context) => CupertinoAlertDialog(
-        title: const Text('Check Group Details'),
-        content: Text(message),
-        actions: [
-          CupertinoDialogAction(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _sectionTitle(String title) {
-    return Text(
-      title,
-      style: const TextStyle(
-        fontSize: 14,
-        fontWeight: FontWeight.w700,
-        color: AppColors.textPrimary,
-      ),
-    );
   }
 
   @override
@@ -142,7 +96,15 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            _sectionTitle('Group Name'),
+            const Text(
+              'Group Name',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
+            ),
+
             const SizedBox(height: 10),
 
             CupertinoTextField(
@@ -158,14 +120,22 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
 
             const SizedBox(height: 24),
 
-            _sectionTitle('Category'),
+            const Text(
+              'Category',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
+            ),
+
             const SizedBox(height: 10),
 
             CupertinoButton(
               padding: const EdgeInsets.all(16),
               color: AppColors.surface,
               borderRadius: BorderRadius.circular(14),
-              onPressed: _selectCategory,
+              onPressed: isLoading ? null : _selectCategory,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -185,32 +155,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
               ),
             ),
 
-            const SizedBox(height: 24),
-
-            _sectionTitle('Add Members'),
-            const SizedBox(height: 6),
-
-            const Text(
-              'Enter names separated by commas or new lines. You are included automatically as the owner.',
-              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-            ),
-
-            const SizedBox(height: 10),
-
-            CupertinoTextField(
-              controller: membersController,
-              placeholder: 'Aarav, Meera, Kabir',
-              minLines: 3,
-              maxLines: 5,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.border),
-              ),
-            ),
-
-            const SizedBox(height: 12),
+            const SizedBox(height: 20),
 
             Container(
               padding: const EdgeInsets.all(14),
@@ -218,33 +163,31 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                 color: AppColors.sage,
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: const Row(
-                children: [
-                  Icon(
-                    CupertinoIcons.person_crop_circle,
-                    color: AppColors.sageDark,
-                  ),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'You will be the group owner.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.sageDark,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
+              child: const Text(
+                'You will automatically become the group owner. '
+                'Invitations for other members will be added separately.',
+                style: TextStyle(fontSize: 12, color: AppColors.sageDark),
               ),
             ),
+
+            if (errorMessage != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                errorMessage!,
+                style: const TextStyle(color: AppColors.error, fontSize: 12),
+              ),
+            ],
 
             const SizedBox(height: 28),
 
             CupertinoButton.filled(
               borderRadius: BorderRadius.circular(14),
-              onPressed: _createGroup,
-              child: const Text('Create Group'),
+              onPressed: isLoading ? null : _createGroup,
+              child: isLoading
+                  ? const CupertinoActivityIndicator(
+                      color: CupertinoColors.white,
+                    )
+                  : const Text('Create Group'),
             ),
           ],
         ),
