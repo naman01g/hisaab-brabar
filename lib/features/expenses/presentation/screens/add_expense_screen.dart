@@ -1,9 +1,10 @@
 import 'package:flutter/cupertino.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../domain/models/expense.dart';
 import 'expense_review_screen.dart';
 
-enum SplitType { equal, exact, percentage }
+import '../../domain/services/split_calculator.dart';
 
 class AddExpenseScreen extends StatefulWidget {
   const AddExpenseScreen({super.key});
@@ -97,7 +98,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     return rupees * 100 + int.parse(paiseText);
   }
 
-  // Convert integer paise into rupees
+  // Convert integer paise into rupees for display
   String _formatPaise(int paise) {
     final rupees = paise ~/ 100;
     final remaining = (paise % 100).toString().padLeft(2, '0');
@@ -105,7 +106,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     return '₹$rupees.$remaining';
   }
 
-  // Calculate percentage total
+  // Calculate percentage total in basis points
   int _percentageTotal() {
     return selectedParticipants.fold(0, (total, member) {
       final percentage = int.tryParse(
@@ -117,6 +118,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   }
 
   // Calculate shares
+
   Map<String, int> _calculateShares() {
     final total = _parsePaise(amountController.text);
 
@@ -124,68 +126,62 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       return {};
     }
 
-    final participantList = selectedParticipants.toList()..sort();
+    final participants = selectedParticipants.toList()..sort();
 
-    // Equal split
-    if (splitType == SplitType.equal) {
-      final baseShare = total ~/ participantList.length;
-      final remainder = total % participantList.length;
+    try {
+      switch (splitType) {
+        case SplitType.equal:
+          return SplitCalculator.equal(
+            totalPaise: total,
+            participants: participants,
+          );
 
-      return {
-        for (int i = 0; i < participantList.length; i++)
-          participantList[i]: baseShare + (i < remainder ? 1 : 0),
-      };
-    }
+        case SplitType.exact:
+          final exactShares = <String, int>{};
 
-    // Exact split
-    if (splitType == SplitType.exact) {
-      return {
-        for (final member in participantList)
-          member: _parsePaise(exactControllers[member]!.text) ?? 0,
-      };
-    }
+          for (final member in participants) {
+            final share = _parsePaise(exactControllers[member]!.text);
 
-    // Percentage split
-    if (_percentageTotal() != 10000) {
+            if (share == null) {
+              return {};
+            }
+
+            exactShares[member] = share;
+          }
+
+          return SplitCalculator.exact(
+            totalPaise: total,
+            participants: participants,
+            sharesPaise: exactShares,
+          );
+
+        case SplitType.percentage:
+          final percentages = <String, int>{};
+
+          for (final member in participants) {
+            final value = int.tryParse(
+              percentageControllers[member]!.text.trim(),
+            );
+
+            if (value == null) {
+              return {};
+            }
+
+            // Convert percentage into basis points.
+            percentages[member] = value * 100;
+          }
+
+          return SplitCalculator.percentage(
+            totalPaise: total,
+            participants: participants,
+            percentagesBasisPoints: percentages,
+          );
+      }
+    } on ArgumentError {
+      // Invalid or incomplete split details.
+      // The UI will show an empty preview until corrected.
       return {};
     }
-
-    final shares = <String, int>{};
-    final remainders = <MapEntry<String, int>>[];
-
-    int allocated = 0;
-
-    for (final member in participantList) {
-      final percentage =
-          int.parse(percentageControllers[member]!.text.trim()) * 100;
-
-      final numerator = total * percentage;
-      final share = numerator ~/ 10000;
-      final remainder = numerator % 10000;
-
-      shares[member] = share;
-      allocated += share;
-
-      remainders.add(MapEntry(member, remainder));
-    }
-
-    // Distribute leftover paise using largest remainder
-    remainders.sort((a, b) {
-      final comparison = b.value.compareTo(a.value);
-
-      if (comparison != 0) return comparison;
-
-      return a.key.compareTo(b.key);
-    });
-
-    final remaining = total - allocated;
-
-    for (int i = 0; i < remaining; i++) {
-      final member = remainders[i].key;
-      shares[member] = shares[member]! + 1;
-    }
-
-    return shares;
   }
 
   // Show group selection
@@ -277,7 +273,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     );
   }
 
-  // Navigate to review screen
+  // Create Expense model and navigate to review screen
   void _reviewExpense() {
     final total = _parsePaise(amountController.text);
     final title = titleController.text.trim();
@@ -304,7 +300,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
 
     final shares = _calculateShares();
 
-    final allocated = shares.values.fold(0, (sum, share) => sum + share);
+    final allocated = shares.values.fold<int>(0, (sum, share) => sum + share);
 
     if (shares.length != selectedParticipants.length ||
         allocated != total ||
@@ -313,17 +309,33 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       return;
     }
 
+    // Create our Expense object
+    final now = DateTime.now();
+
+    final expense = Expense(
+      id: now.microsecondsSinceEpoch.toString(),
+      title: title,
+      category: selectedCategory,
+      group: selectedGroup!,
+      paidBy: selectedPayer,
+      amountPaise: total,
+      sharesPaise: shares,
+      splitType: splitType,
+      createdAt: now,
+    );
+
+    // Send expense details to review screen
     Navigator.push(
       context,
       CupertinoPageRoute(
         builder: (context) => ExpenseReviewScreen(
-          title: title,
-          category: selectedCategory,
-          group: selectedGroup!,
-          payer: selectedPayer,
-          amountPaise: total,
-          shares: Map<String, int>.from(shares),
-          splitMethod: splitType.name.toUpperCase(),
+          title: expense.title,
+          category: expense.category,
+          group: expense.group,
+          payer: expense.paidBy,
+          amountPaise: expense.amountPaise,
+          shares: expense.sharesPaise,
+          splitMethod: expense.splitType.name.toUpperCase(),
         ),
       ),
     );
@@ -484,7 +496,6 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                 ),
               ),
             ),
-
             if (isSelected && splitType != SplitType.equal) ...[
               const SizedBox(width: 8),
               _buildShareInput(member),
@@ -519,7 +530,8 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     }
 
     final shares = _calculateShares();
-    final allocated = shares.values.fold(0, (sum, value) => sum + value);
+
+    final allocated = shares.values.fold<int>(0, (sum, value) => sum + value);
 
     final participantList = selectedParticipants.toList()..sort();
 
@@ -598,12 +610,10 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   Widget build(BuildContext context) {
     return CupertinoPageScaffold(
       backgroundColor: AppColors.background,
-
       navigationBar: CupertinoNavigationBar(
         middle: const Text('Add Expense'),
         backgroundColor: AppColors.background.withValues(alpha: 0.9),
       ),
-
       child: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(20),
