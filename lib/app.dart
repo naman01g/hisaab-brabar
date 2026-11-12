@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
+import 'core/theme/app_colors.dart';
 import 'core/theme/app_theme.dart';
-import 'features/home/presentation/screens/home_screen.dart';
+import 'core/navigation/main_navigation.dart';
+
+import 'package:google_fonts/google_fonts.dart';
 
 class HisaabBrabarApp extends StatelessWidget {
   const HisaabBrabarApp({super.key});
@@ -10,9 +13,19 @@ class HisaabBrabarApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Hisaab brabar',
+      title: 'Hisaab Brabar',
       theme: AppTheme.lightTheme,
-      home: const HomeScreen(),
+      home: const MainNavigation(),
+
+      builder: (context, child) {
+        return DefaultTextStyle(
+          style: GoogleFonts.manrope(
+            color: AppColors.textPrimary,
+            decoration: TextDecoration.none,
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
     );
   }
 }
