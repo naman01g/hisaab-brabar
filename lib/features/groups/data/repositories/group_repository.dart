@@ -11,7 +11,7 @@ class GroupRepository {
   CollectionReference<Map<String, dynamic>> get _groups =>
       _db.collection('groups');
 
-  // Get groups belonging to the signed-in user.
+  // Stream groups belonging to the signed-in user.
   Stream<List<Group>> watchMyGroups() {
     final user = _auth.currentUser;
 
@@ -53,7 +53,6 @@ class GroupRepository {
 
     final document = _groups.doc();
 
-    // Firestore assigns the actual creation time on the server.
     await document.set({
       'name': cleanName,
       'category': category,
@@ -83,7 +82,7 @@ class GroupRepository {
     );
   }
 
-  // Convert a Firestore document into a Group object.
+  // Convert Firestore document into a Group object.
   Group _fromDocument(QueryDocumentSnapshot<Map<String, dynamic>> document) {
     final data = document.data();
 

@@ -3,9 +3,11 @@ import 'package:flutter/cupertino.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../data/repositories/group_repository.dart';
 import '../../domain/models/group.dart';
+import '../../domain/models/group_invitation.dart';
 import '../widgets/group_list_card.dart';
 import 'create_group_screen.dart';
 import 'group_details_screen.dart';
+import 'join_group_screen.dart';
 
 class GroupsScreen extends StatefulWidget {
   const GroupsScreen({super.key});
@@ -42,7 +44,6 @@ class _GroupsScreenState extends State<GroupsScreen> {
       context,
       CupertinoPageRoute(builder: (context) => const CreateGroupScreen()),
     );
-    // Firestore stream automatically updates the list.
   }
 
   void _openGroupDetails(Group group) {
@@ -51,6 +52,97 @@ class _GroupsScreenState extends State<GroupsScreen> {
       CupertinoPageRoute(
         builder: (context) => GroupDetailsScreen(group: group),
       ),
+    );
+  }
+
+  Future<void> _openJoinGroup() async {
+    final controller = TextEditingController();
+
+    final code = await showCupertinoDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return CupertinoAlertDialog(
+          title: const Text('Join a Group'),
+          content: Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: CupertinoTextField(
+              controller: controller,
+              placeholder: 'Paste invitation code',
+              autofocus: true,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.border),
+              ),
+            ),
+          ),
+          actions: [
+            CupertinoDialogAction(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+              },
+              child: const Text('Cancel'),
+            ),
+            CupertinoDialogAction(
+              isDefaultAction: true,
+              onPressed: () {
+                Navigator.pop(dialogContext, controller.text.trim());
+              },
+              child: const Text('Continue'),
+            ),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (!mounted || code == null || code.isEmpty) return;
+
+    try {
+      final parts = GroupInvitation.parseInvitationCode(code);
+
+      final joined = await Navigator.push<bool>(
+        context,
+        CupertinoPageRoute(
+          builder: (context) =>
+              JoinGroupScreen(groupId: parts[0], invitationId: parts[1]),
+        ),
+      );
+
+      // The Firestore groups stream refreshes automatically
+      // after a successful invitation acceptance.
+      if (joined == true && mounted) {
+        // No manual reload needed.
+      }
+    } on FormatException catch (error) {
+      if (!mounted) return;
+      _showMessage(error.message);
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(error.toString());
+    }
+  }
+
+  void _showMessage(String message) {
+    showCupertinoDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return CupertinoAlertDialog(
+          title: const Text('Invitation'),
+          content: Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(message),
+          ),
+          actions: [
+            CupertinoDialogAction(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -89,10 +181,20 @@ class _GroupsScreenState extends State<GroupsScreen> {
       navigationBar: CupertinoNavigationBar(
         middle: const Text('Your Groups'),
         backgroundColor: AppColors.background.withValues(alpha: 0.9),
-        trailing: CupertinoButton(
-          padding: EdgeInsets.zero,
-          onPressed: _openCreateGroup,
-          child: const Icon(CupertinoIcons.add, color: AppColors.primary),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CupertinoButton(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              onPressed: _openJoinGroup,
+              child: const Icon(CupertinoIcons.link, color: AppColors.primary),
+            ),
+            CupertinoButton(
+              padding: EdgeInsets.zero,
+              onPressed: _openCreateGroup,
+              child: const Icon(CupertinoIcons.add, color: AppColors.primary),
+            ),
+          ],
         ),
       ),
       child: SafeArea(
@@ -138,7 +240,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
             return ListView(
               padding: const EdgeInsets.all(20),
               children: [
-                // Create Group Banner
+                // Create group banner
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -228,7 +330,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
 
                 const SizedBox(height: 20),
 
-                // Live balance placeholder
+                // Group balances
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(

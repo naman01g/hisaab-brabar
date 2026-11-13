@@ -46,3 +46,57 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+android/build/reports/
+
+# ==========================================
+# LOCAL ENVIRONMENT & SECRETS
+# ==========================================
+
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+.dev.vars
+.dev.vars.*
+
+# ==========================================
+# FIREBASE / GOOGLE PRIVATE CREDENTIALS
+# ==========================================
+
+credentials/
+secrets/
+
+**/service-account*.json
+**/serviceAccount*.json
+**/firebase-adminsdk-*.json
+**/*-credentials.json
+
+# ==========================================
+# ANDROID SIGNING KEYS
+# ==========================================
+
+key.properties
+**/key.properties
+
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+
+# ==========================================
+# FIREBASE LOCAL FILES
+# ==========================================
+
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# ==========================================
+# MACOS
+# ==========================================
+
+.DS_Store

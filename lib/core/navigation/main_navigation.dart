@@ -1,12 +1,74 @@
+import 'dart:async';
+
+import 'package:app_links/app_links.dart';
 import 'package:flutter/cupertino.dart';
 
 import '../theme/app_colors.dart';
 import '../../features/home/presentation/screens/home_screen.dart';
 import '../../features/groups/presentation/screens/groups_screen.dart';
 import '../../features/expenses/presentation/screens/add_expense_screen.dart';
+import '../../features/people/presentation/screens/people_discovery_screen.dart';
+import '../../features/profile/presentation/screens/profile_screen.dart';
+import '../../features/groups/presentation/screens/join_group_screen.dart';
 
-class MainNavigation extends StatelessWidget {
+class MainNavigation extends StatefulWidget {
   const MainNavigation({super.key});
+
+  @override
+  State<MainNavigation> createState() => _MainNavigationState();
+}
+
+class _MainNavigationState extends State<MainNavigation> {
+  final AppLinks _appLinks = AppLinks();
+
+  StreamSubscription<Uri>? _linkSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _linkSubscription = _appLinks.uriLinkStream.listen(_handleLink);
+
+    _appLinks
+        .getInitialLink()
+        .then((uri) {
+          if (uri != null) _handleLink(uri);
+        })
+        .catchError((_) {});
+  }
+
+  void _handleLink(Uri uri) {
+    if (uri.scheme != 'hisaabbrabar' || uri.host != 'join') {
+      return;
+    }
+
+    final groupId = uri.queryParameters['groupId'];
+    final invitationId = uri.queryParameters['inviteId'];
+
+    if (groupId == null ||
+        groupId.isEmpty ||
+        invitationId == null ||
+        invitationId.isEmpty) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      Navigator.of(context).push(
+        CupertinoPageRoute(
+          builder: (_) =>
+              JoinGroupScreen(groupId: groupId, invitationId: invitationId),
+        ),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _linkSubscription?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,8 +91,8 @@ class MainNavigation extends StatelessWidget {
             label: 'Add',
           ),
           BottomNavigationBarItem(
-            icon: Icon(CupertinoIcons.time),
-            label: 'Activity',
+            icon: Icon(CupertinoIcons.person_2),
+            label: 'People',
           ),
           BottomNavigationBarItem(
             icon: Icon(CupertinoIcons.person),
@@ -38,7 +100,6 @@ class MainNavigation extends StatelessWidget {
           ),
         ],
       ),
-
       tabBuilder: (context, index) {
         return CupertinoTabView(
           builder: (context) {
@@ -50,32 +111,15 @@ class MainNavigation extends StatelessWidget {
               case 2:
                 return const AddExpenseScreen();
               case 3:
-                return const _PlaceholderTab(title: 'Activity');
+                return const PeopleDiscoveryScreen();
+              case 4:
+                return const ProfileScreen();
               default:
-                return const _PlaceholderTab(title: 'Profile');
+                return const HomeScreen();
             }
           },
         );
       },
-    );
-  }
-}
-
-class _PlaceholderTab extends StatelessWidget {
-  final String title;
-
-  const _PlaceholderTab({required this.title});
-
-  @override
-  Widget build(BuildContext context) {
-    return CupertinoPageScaffold(
-      navigationBar: CupertinoNavigationBar(middle: Text(title)),
-      child: Center(
-        child: Text(
-          '$title — Coming Soon',
-          style: const TextStyle(color: AppColors.textSecondary, fontSize: 16),
-        ),
-      ),
     );
   }
 }

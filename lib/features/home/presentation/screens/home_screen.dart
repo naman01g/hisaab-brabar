@@ -1,45 +1,116 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/cupertino.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../notifications/data/repositories/notification_repository.dart';
+import '../../../notifications/presentation/screens/notifications_screen.dart';
 import '../widgets/quick_action_tile.dart';
 import '../widgets/group_card.dart';
-
 import '../widgets/transaction_tile.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
+  void _openNotifications(BuildContext context) {
+    Navigator.push(
+      context,
+      CupertinoPageRoute(builder: (context) => const NotificationsScreen()),
+    );
+  }
+
+  Widget _notificationButton(BuildContext context) {
+    final repository = NotificationRepository();
+
+    return StreamBuilder<int>(
+      stream: repository.watchUnreadCount(),
+      builder: (context, snapshot) {
+        final unreadCount = snapshot.data ?? 0;
+
+        return CupertinoButton(
+          padding: EdgeInsets.zero,
+          minimumSize: const Size(42, 42),
+          onPressed: () => _openNotifications(context),
+          child: SizedBox(
+            width: 42,
+            height: 42,
+            child: Stack(
+              alignment: Alignment.center,
+              clipBehavior: Clip.none,
+              children: [
+                const Icon(
+                  CupertinoIcons.bell,
+                  color: AppColors.primary,
+                  size: 25,
+                ),
+                if (unreadCount > 0)
+                  Positioned(
+                    top: 3,
+                    right: 4,
+                    child: Container(
+                      height: 9,
+                      width: 9,
+                      decoration: const BoxDecoration(
+                        color: AppColors.error,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+
+    final rawName = user?.displayName?.trim() ?? '';
+    final firstName = rawName.isEmpty
+        ? 'there'
+        : rawName.split(RegExp(r'\s+')).first;
+
+    final displayName = firstName == 'there'
+        ? firstName
+        : '${firstName[0].toUpperCase()}${firstName.substring(1)}';
+
     return CupertinoPageScaffold(
       backgroundColor: AppColors.background,
 
-      // Top Navigation Bar
+      // Header: App name and notification bell only.
       navigationBar: CupertinoNavigationBar(
         middle: const Text('Hisaab Brabar'),
         backgroundColor: AppColors.background.withValues(alpha: 0.9),
+        trailing: _notificationButton(context),
       ),
 
-      // Main Screen Content
       child: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            // Greeting Section
-            const Text(
-              'Namaste! 👋',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary,
-              ),
-            ),
-
-            const SizedBox(height: 6),
-
-            const Text(
-              'Here is your expense overview',
-              style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+            // Personalized greeting.
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Hello, $displayName 👋',
+                  style: const TextStyle(
+                    fontSize: 25,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Here is your expense overview',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
             ),
 
             const SizedBox(height: 24),
@@ -55,7 +126,6 @@ class HomeScreen extends StatelessWidget {
                 borderRadius: BorderRadius.circular(24),
                 border: Border.all(color: AppColors.border),
               ),
-
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -67,9 +137,7 @@ class HomeScreen extends StatelessWidget {
                       color: AppColors.textSecondary,
                     ),
                   ),
-
                   const SizedBox(height: 12),
-
                   const Text(
                     '₹4,250',
                     style: TextStyle(
@@ -78,19 +146,13 @@ class HomeScreen extends StatelessWidget {
                       color: AppColors.textPrimary,
                     ),
                   ),
-
                   const SizedBox(height: 20),
-
-                  // Horizontal Divider
                   Container(
                     width: double.infinity,
                     height: 1,
                     color: AppColors.border,
                   ),
-
                   const SizedBox(height: 12),
-
-                  // Balance Breakdown
                   Row(
                     children: [
                       Expanded(
@@ -116,7 +178,6 @@ class HomeScreen extends StatelessWidget {
                           ],
                         ),
                       ),
-
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -148,7 +209,7 @@ class HomeScreen extends StatelessWidget {
 
             const SizedBox(height: 24),
 
-            // Quick Actions Heading
+            // Quick Actions
             const Text(
               'Quick Actions',
               style: TextStyle(
@@ -157,10 +218,8 @@ class HomeScreen extends StatelessWidget {
                 color: AppColors.textPrimary,
               ),
             ),
-
             const SizedBox(height: 12),
 
-            // Quick Actions Row
             Row(
               children: [
                 Expanded(
@@ -170,9 +229,7 @@ class HomeScreen extends StatelessWidget {
                     iconBackground: AppColors.secondary,
                   ),
                 ),
-
                 const SizedBox(width: 8),
-
                 Expanded(
                   child: QuickActionTile(
                     title: 'Settle Up',
@@ -180,9 +237,7 @@ class HomeScreen extends StatelessWidget {
                     iconBackground: AppColors.sage,
                   ),
                 ),
-
                 const SizedBox(width: 8),
-
                 Expanded(
                   child: QuickActionTile(
                     title: 'Invite',
@@ -190,9 +245,7 @@ class HomeScreen extends StatelessWidget {
                     iconBackground: AppColors.secondary,
                   ),
                 ),
-
                 const SizedBox(width: 8),
-
                 Expanded(
                   child: QuickActionTile(
                     title: 'Discover',
@@ -205,11 +258,11 @@ class HomeScreen extends StatelessWidget {
 
             const SizedBox(height: 28),
 
-            // Active Groups Heading
+            // Active Groups
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
+              children: const [
+                Text(
                   'Active Groups',
                   style: TextStyle(
                     fontSize: 18,
@@ -217,7 +270,6 @@ class HomeScreen extends StatelessWidget {
                     color: AppColors.textPrimary,
                   ),
                 ),
-
                 Text(
                   'View All',
                   style: TextStyle(
@@ -228,10 +280,8 @@ class HomeScreen extends StatelessWidget {
                 ),
               ],
             ),
-
             const SizedBox(height: 14),
 
-            // Group 1
             const GroupCard(
               groupName: 'Flat 402 Boys & Girls',
               members: '4 members',
@@ -244,7 +294,6 @@ class HomeScreen extends StatelessWidget {
 
             const SizedBox(height: 10),
 
-            // Group 2
             const GroupCard(
               groupName: 'Goa Summer Getaway',
               members: '6 members',
@@ -257,7 +306,6 @@ class HomeScreen extends StatelessWidget {
 
             const SizedBox(height: 10),
 
-            // Group 3
             const GroupCard(
               groupName: 'College Fest SOS',
               members: '12 members',
@@ -267,13 +315,14 @@ class HomeScreen extends StatelessWidget {
               iconBackground: AppColors.sage,
               amountColor: AppColors.sageDark,
             ),
+
             const SizedBox(height: 28),
 
-            // Recent Transactions Heading
+            // Recent Transactions
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
+              children: const [
+                Text(
                   'Recent Transactions',
                   style: TextStyle(
                     fontSize: 18,
@@ -281,7 +330,6 @@ class HomeScreen extends StatelessWidget {
                     color: AppColors.textPrimary,
                   ),
                 ),
-
                 Text(
                   'History',
                   style: TextStyle(
@@ -292,10 +340,8 @@ class HomeScreen extends StatelessWidget {
                 ),
               ],
             ),
-
             const SizedBox(height: 14),
 
-            // Transaction 1
             const TransactionTile(
               title: 'Groceries & Daily Staples',
               paidBy: 'Paid by you',
@@ -308,7 +354,6 @@ class HomeScreen extends StatelessWidget {
 
             const SizedBox(height: 10),
 
-            // Transaction 2
             const TransactionTile(
               title: 'Swiggy Biryani Feast',
               paidBy: 'Paid by Meera',
@@ -321,7 +366,6 @@ class HomeScreen extends StatelessWidget {
 
             const SizedBox(height: 10),
 
-            // Transaction 3
             const TransactionTile(
               title: 'Airport Uber Intercity',
               paidBy: 'Paid by you',
