@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../data/repositories/profile_repository.dart';
+import '../../data/repositories/payment_details_repository.dart';
 import '../../domain/models/user_profile.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -14,9 +15,12 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final repository = ProfileRepository();
+  final paymentDetailsRepository = PaymentDetailsRepository();
 
   final nameController = TextEditingController();
   final tagController = TextEditingController();
+  final upiController = TextEditingController();
+  final phoneController = TextEditingController();
 
   static const Map<String, String> avatars = {
     'student': '🗿',
@@ -49,14 +53,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void dispose() {
     nameController.dispose();
     tagController.dispose();
+    upiController.dispose();
+    phoneController.dispose();
     super.dispose();
   }
 
   Future<void> _loadProfile() async {
     try {
       final profile = await repository.getMyProfile();
+      final paymentDetails = await paymentDetailsRepository
+          .getMyPaymentDetails();
 
       if (!mounted) return;
+
+      upiController.text = paymentDetails.upiId;
+      phoneController.text = paymentDetails.phoneNumber;
 
       if (profile == null) {
         final user = FirebaseAuth.instance.currentUser;
@@ -162,6 +173,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return;
     }
 
+    try {
+      PaymentDetailsRepository.normalizeUpiId(upiController.text);
+      PaymentDetailsRepository.normalizePhoneNumber(phoneController.text);
+    } catch (error) {
+      _showMessage('Invalid payment details', error.toString());
+      return;
+    }
+
     setState(() {
       isSaving = true;
       errorMessage = null;
@@ -173,6 +192,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         avatarId: selectedAvatar,
         tags: tags,
         discoverable: discoverable,
+      );
+
+      // Payment details are stored separately from the discoverable profile.
+      // The repository syncs a group-scoped copy to the user's current groups.
+      await paymentDetailsRepository.saveMyPaymentDetails(
+        upiId: upiController.text,
+        phoneNumber: phoneController.text,
       );
 
       // Keep the Firebase Auth display name in sync.
@@ -339,6 +365,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildProfileHeader() {
     return Container(
+      width: double.infinity,
+      alignment: Alignment.center,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: AppColors.secondary,
@@ -382,6 +410,132 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Widget _paymentTextField({
+    required TextEditingController controller,
+    required String placeholder,
+    TextInputType? keyboardType,
+  }) {
+    return CupertinoTextField(
+      controller: controller,
+      placeholder: placeholder,
+      keyboardType: keyboardType,
+      autocorrect: false,
+      textCapitalization: TextCapitalization.none,
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+    );
+  }
+
+  Widget _buildPaymentDetailsForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle('Payment Details'),
+        const SizedBox(height: 7),
+        const Text(
+          'Add your UPI ID so group members can pay you directly. Your payment details are kept separate from your discoverable profile.',
+          style: TextStyle(
+            fontSize: 11,
+            height: 1.4,
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: 14),
+        const Text(
+          'UPI ID',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 7),
+        _paymentTextField(
+          controller: upiController,
+          placeholder: 'yourname@bank',
+          keyboardType: TextInputType.emailAddress,
+        ),
+        const SizedBox(height: 14),
+        const Text(
+          'Phone Number (optional)',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 7),
+        _paymentTextField(
+          controller: phoneController,
+          placeholder: '+91 9876543210',
+          keyboardType: TextInputType.phone,
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Your phone number is shared only with members of your groups. UPI payments use your UPI ID.',
+          style: TextStyle(
+            fontSize: 10,
+            color: AppColors.textSecondary,
+            height: 1.4,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPaymentDetailsView() {
+    final upiId = upiController.text.trim();
+    final phone = phoneController.text.trim();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionTitle('Payment Details'),
+          const SizedBox(height: 12),
+          const Text(
+            'UPI ID',
+            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            upiId.isEmpty ? 'Not added' : upiId,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Phone Number',
+            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            phone.isEmpty ? 'Not added' : phone,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildEditForm() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -407,6 +561,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
 
         const SizedBox(height: 26),
+
+        _buildPaymentDetailsForm(),
+
+        const SizedBox(height: 28),
 
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -540,6 +698,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _sectionTitle('Your Tags'),
         const SizedBox(height: 12),
         _buildTags(),
+
+        const SizedBox(height: 28),
+
+        _buildPaymentDetailsView(),
 
         const SizedBox(height: 28),
 

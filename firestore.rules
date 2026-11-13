@@ -1,0 +1,1225 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==========================================
+    // 1. COMMON HELPERS
+    // ==========================================
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isGroupMember(groupId) {
+      let groupPath =
+        /databases/$(database)/documents/groups/$(groupId);
+
+      return isSignedIn()
+        && exists(groupPath)
+        && get(groupPath).data.memberIds is list
+        && request.auth.uid in get(groupPath).data.memberIds;
+    }
+
+    // Check that UID and display name match an actual
+    // member record in the group.
+    function hasMemberIdentity(groupData, uid, name) {
+      return groupData.members is list
+        && (
+          groupData.members.hasAny([
+            {
+              'userId': uid,
+              'displayName': name,
+              'role': 'owner'
+            }
+          ])
+          ||
+          groupData.members.hasAny([
+            {
+              'userId': uid,
+              'displayName': name,
+              'role': 'admin'
+            }
+          ])
+          ||
+          groupData.members.hasAny([
+            {
+              'userId': uid,
+              'displayName': name,
+              'role': 'member'
+            }
+          ])
+        );
+    }
+
+
+    // ==========================================
+    // 2. GROUP CREATION VALIDATION
+    // ==========================================
+
+    function validGroupCreation() {
+      let data = request.resource.data;
+
+      return isSignedIn()
+
+        && data.keys().hasAll([
+          'name',
+          'category',
+          'createdBy',
+          'currencyCode',
+          'createdAt',
+          'memberIds',
+          'members'
+        ])
+
+        && data.keys().hasOnly([
+          'name',
+          'category',
+          'createdBy',
+          'currencyCode',
+          'createdAt',
+          'memberIds',
+          'members'
+        ])
+
+        && data.name is string
+        && data.name.size() >= 2
+        && data.name.size() <= 60
+
+        && data.category is string
+        && data.category.size() >= 1
+        && data.category.size() <= 30
+
+        && data.currencyCode == 'INR'
+
+        && data.createdBy == request.auth.uid
+
+        // Creator is initially the only member.
+        && data.memberIds is list
+        && data.memberIds.size() == 1
+        && data.memberIds[0] == request.auth.uid
+
+        && data.members is list
+        && data.members.size() == 1
+
+        && data.members[0].keys().hasAll([
+          'userId',
+          'displayName',
+          'role'
+        ])
+
+        && data.members[0].keys().hasOnly([
+          'userId',
+          'displayName',
+          'role'
+        ])
+
+        && data.members[0].userId == request.auth.uid
+
+        && data.members[0].displayName is string
+        && data.members[0].displayName.size() >= 1
+        && data.members[0].displayName.size() <= 40
+
+        && data.members[0].role == 'owner'
+
+        && data.createdAt == request.time;
+    }
+
+
+    // ==========================================
+    // 3. EXPENSE VALIDATION
+    // ==========================================
+
+    function validExpense(groupId) {
+      let data = request.resource.data;
+
+      let groupPath =
+        /databases/$(database)/documents/groups/$(groupId);
+
+      let groupData = get(groupPath).data;
+
+      return isGroupMember(groupId)
+
+        && data.keys().hasAll([
+          'title',
+          'category',
+          'groupName',
+          'createdBy',
+          'paidByUserId',
+          'paidByName',
+          'amountPaise',
+          'participantIds',
+          'participantNames',
+          'sharesPaise',
+          'splitType',
+          'currencyCode',
+          'createdAt'
+        ])
+
+        && data.keys().hasOnly([
+          'title',
+          'category',
+          'groupName',
+          'createdBy',
+          'paidByUserId',
+          'paidByName',
+          'amountPaise',
+          'participantIds',
+          'participantNames',
+          'sharesPaise',
+          'splitType',
+          'currencyCode',
+          'createdAt'
+        ])
+
+        // Expense details.
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 100
+
+        && data.category is string
+        && data.category.size() >= 1
+        && data.category.size() <= 40
+
+        && data.groupName == groupData.name
+
+        // Creator must be a group member.
+        && data.createdBy == request.auth.uid
+
+        // Amount is stored in integer paise.
+        && data.amountPaise is int
+        && data.amountPaise > 0
+
+        // Payer must be a member.
+        && data.paidByUserId is string
+        && data.paidByUserId in groupData.memberIds
+
+        && data.paidByName is string
+        && hasMemberIdentity(
+          groupData,
+          data.paidByUserId,
+          data.paidByName
+        )
+
+        // All participants must belong to the group.
+        && data.participantIds is list
+        && data.participantIds.size() > 0
+        && data.participantIds.size() <= 50
+        && data.participantIds.hasOnly(groupData.memberIds)
+
+        // Participant maps must match participant IDs.
+        && data.participantNames is map
+        && data.participantNames.size() == data.participantIds.size()
+        && data.participantNames.keys().hasAll(data.participantIds)
+        && data.participantNames.keys().hasOnly(data.participantIds)
+
+        // Share map must match participant IDs.
+        && data.sharesPaise is map
+        && data.sharesPaise.size() == data.participantIds.size()
+        && data.sharesPaise.keys().hasAll(data.participantIds)
+        && data.sharesPaise.keys().hasOnly(data.participantIds)
+
+        && data.splitType in [
+          'equal',
+          'exact',
+          'percentage'
+        ]
+
+        && data.currencyCode == 'INR'
+
+        && data.createdAt == request.time;
+    }
+
+
+    // ==========================================
+    // 4. PROFILE VALIDATION
+    // ==========================================
+
+    function validProfile() {
+      let data = request.resource.data;
+
+      return data.keys().hasAll([
+        'displayName',
+        'avatarId',
+        'tags',
+        'discoverable',
+        'createdAt',
+        'updatedAt'
+      ])
+
+      && data.keys().hasOnly([
+        'displayName',
+        'avatarId',
+        'tags',
+        'discoverable',
+        'createdAt',
+        'updatedAt'
+      ])
+
+      && data.displayName is string
+      && data.displayName.size() >= 2
+      && data.displayName.size() <= 40
+
+      && data.avatarId in [
+        'student',
+        'explorer',
+        'traveler',
+        'artist',
+        'gamer',
+        'reader',
+        'chick',
+        'octopus',
+        'athlete',
+        'coffee'
+      ]
+
+      && data.tags is list
+      && data.tags.size() <= 10
+
+      && data.discoverable is bool
+
+      && data.createdAt is timestamp
+      && data.updatedAt == request.time;
+    }
+
+
+    // ==========================================
+    // 4A. PRIVATE PAYMENT PROFILE VALIDATION
+    // ==========================================
+
+    function validPrivatePaymentProfile() {
+      let data = request.resource.data;
+
+      return data.keys().hasAll([
+        'upiId',
+        'phoneNumber',
+        'createdAt',
+        'updatedAt'
+      ])
+
+      && data.keys().hasOnly([
+        'upiId',
+        'phoneNumber',
+        'createdAt',
+        'updatedAt'
+      ])
+
+      && data.upiId is string
+      && data.upiId.size() <= 100
+
+      && data.phoneNumber is string
+      && data.phoneNumber.size() <= 20
+
+      && data.createdAt is timestamp
+      && data.updatedAt == request.time;
+    }
+
+    function validGroupPaymentDetails() {
+      let data = request.resource.data;
+
+      return data.keys().hasAll([
+        'upiId',
+        'phoneNumber',
+        'updatedAt'
+      ])
+
+      && data.keys().hasOnly([
+        'upiId',
+        'phoneNumber',
+        'updatedAt'
+      ])
+
+      && data.upiId is string
+      && data.upiId.size() <= 100
+
+      && data.phoneNumber is string
+      && data.phoneNumber.size() <= 20
+
+      && data.updatedAt == request.time;
+    }
+
+    // ==========================================
+    // 5. INVITATION CREATION VALIDATION
+    // ==========================================
+
+    function validInvitationCreation(groupId) {
+      let data = request.resource.data;
+
+      let groupPath =
+        /databases/$(database)/documents/groups/$(groupId);
+
+      let groupData = get(groupPath).data;
+
+      return isSignedIn()
+        && isGroupMember(groupId)
+
+        && data.keys().hasAll([
+          'groupId',
+          'groupName',
+          'createdBy',
+          'createdAt',
+          'expiresAt',
+          'status',
+          'acceptedBy',
+          'acceptedAt'
+        ])
+
+        && data.keys().hasOnly([
+          'groupId',
+          'groupName',
+          'createdBy',
+          'createdAt',
+          'expiresAt',
+          'status',
+          'acceptedBy',
+          'acceptedAt'
+        ])
+
+        && data.groupId == groupId
+
+        && data.groupName == groupData.name
+
+        && data.createdBy == request.auth.uid
+
+        && data.createdAt == request.time
+
+        && data.expiresAt is timestamp
+
+        // Invitation must expire within seven days.
+        && data.expiresAt > request.time
+        && data.expiresAt <=
+          request.time + duration.value(7, 'd')
+
+        && data.status == 'pending'
+
+        && data.acceptedBy == null
+        && data.acceptedAt == null
+
+        // Do not invite into an already full group.
+        && groupData.memberIds.size() < 50;
+    }
+
+
+    // ==========================================
+    // 6. INVITATION ACCEPTANCE VALIDATION
+    // ==========================================
+
+    function validInvitationAcceptance(
+      groupId,
+      invitationId
+    ) {
+      let claimPath =
+        /databases/$(database)/documents/groups/$(groupId)/joinClaims/$(request.auth.uid);
+
+      let groupPath =
+        /databases/$(database)/documents/groups/$(groupId);
+
+      let claim = getAfter(claimPath).data;
+      let groupAfter = getAfter(groupPath).data;
+
+      return isSignedIn()
+
+        && resource.data.groupId == groupId
+
+        && resource.data.status == 'pending'
+
+        && resource.data.expiresAt > request.time
+
+        // Only acceptance fields may change.
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            'status',
+            'acceptedBy',
+            'acceptedAt'
+          ])
+
+        && request.resource.data.status == 'accepted'
+
+        && request.resource.data.acceptedBy == request.auth.uid
+
+        && request.resource.data.acceptedAt == request.time
+
+        // Matching join claim must exist after the transaction.
+        && claim.userId == request.auth.uid
+        && claim.invitationId == invitationId
+
+        // The same transaction must add the UID to the group.
+        && groupAfter.memberIds.hasAny([
+          request.auth.uid
+        ]);
+    }
+
+
+    // ==========================================
+    // 7. JOIN CLAIM VALIDATION
+    // ==========================================
+
+    function validJoinClaim(groupId) {
+      let data = request.resource.data;
+
+      let invitationPath =
+        /databases/$(database)/documents/groups/$(groupId)/invitations/$(data.invitationId);
+
+      let groupPath =
+        /databases/$(database)/documents/groups/$(groupId);
+
+      let invitation = getAfter(invitationPath).data;
+      let groupAfter = getAfter(groupPath).data;
+
+      return isSignedIn()
+
+        && data.keys().hasAll([
+          'userId',
+          'displayName',
+          'invitationId',
+          'createdAt'
+        ])
+
+        && data.keys().hasOnly([
+          'userId',
+          'displayName',
+          'invitationId',
+          'createdAt'
+        ])
+
+        && data.userId == request.auth.uid
+
+        && data.displayName is string
+        && data.displayName.size() >= 2
+        && data.displayName.size() <= 40
+
+        && data.invitationId is string
+
+        && data.createdAt == request.time
+
+        // The same transaction must accept the invitation.
+        && invitation.status == 'accepted'
+        && invitation.acceptedBy == request.auth.uid
+        && invitation.groupId == groupId
+        && invitation.expiresAt > request.time
+
+        // The same transaction must update the group.
+        && groupAfter.memberIds.hasAny([
+          request.auth.uid
+        ]);
+    }
+
+
+    // ==========================================
+    // 8. GROUP MEMBERSHIP JOIN VALIDATION
+    // ==========================================
+
+    function validGroupJoin(groupId) {
+      let claimPath =
+        /databases/$(database)/documents/groups/$(groupId)/joinClaims/$(request.auth.uid);
+
+      let claim = getAfter(claimPath).data;
+
+      let invitationPath =
+        /databases/$(database)/documents/groups/$(groupId)/invitations/$(claim.invitationId);
+
+      let invitation = getAfter(invitationPath).data;
+
+      let oldIds = resource.data.memberIds;
+      let newIds = request.resource.data.memberIds;
+
+      let oldMembers = resource.data.members;
+      let newMembers = request.resource.data.members;
+
+      return isSignedIn()
+
+        // Only these two group fields may change.
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            'memberIds',
+            'members'
+          ])
+
+        && oldIds is list
+        && newIds is list
+
+        && oldMembers is list
+        && newMembers is list
+
+        // Existing members must remain.
+        && oldIds.size() == oldMembers.size()
+        && newIds.size() == oldIds.size() + 1
+        && newIds.size() <= 50
+        && newIds.hasAll(oldIds)
+
+        // The authenticated user is the only new UID.
+        && !(request.auth.uid in oldIds)
+        && newIds.hasAny([
+          request.auth.uid
+        ])
+
+        // Existing member records must remain.
+        && newMembers.size() == oldMembers.size() + 1
+        && newMembers.size() == newIds.size()
+        && newMembers.hasAll(oldMembers)
+
+        // The newly added member must match the claim.
+        && newMembers.hasAny([
+          {
+            'userId': request.auth.uid,
+            'displayName': claim.displayName,
+            'role': 'member'
+          }
+        ])
+
+        && claim.userId == request.auth.uid
+
+        // The invitation must be accepted by this user.
+        && invitation.status == 'accepted'
+        && invitation.acceptedBy == request.auth.uid
+        && invitation.groupId == groupId
+
+        && invitation.expiresAt > request.time;
+    }
+
+
+    // ==========================================
+    // 9. SETTLE-UP NOTIFICATION VALIDATION
+    //    (ordinary reminder, type == 'settle_up')
+    // ==========================================
+
+    function validSettleUpNotification(userId) {
+      let data = request.resource.data;
+
+      let groupPath =
+        /databases/$(database)/documents/groups/$(data.groupId);
+
+      let groupData = get(groupPath).data;
+
+      return isSignedIn()
+
+        && data.keys().hasAll([
+          'type',
+          'groupId',
+          'groupName',
+          'fromUid',
+          'fromName',
+          'toUid',
+          'toName',
+          'message',
+          'status',
+          'createdAt',
+          'readAt'
+        ])
+
+        && data.keys().hasOnly([
+          'type',
+          'groupId',
+          'groupName',
+          'fromUid',
+          'fromName',
+          'toUid',
+          'toName',
+          'message',
+          'status',
+          'createdAt',
+          'readAt'
+        ])
+
+        && data.type == 'settle_up'
+
+        && data.groupId is string
+
+        && data.groupName == groupData.name
+
+        // Sender must be the authenticated group member.
+        && data.fromUid == request.auth.uid
+        && data.fromUid in groupData.memberIds
+        && data.fromUid != userId
+
+        // Recipient must also belong to the same group.
+        && data.toUid == userId
+        && data.toUid in groupData.memberIds
+
+        // Names must match actual group member records.
+        && data.fromName is string
+        && data.fromName.size() >= 2
+        && data.fromName.size() <= 40
+
+        && hasMemberIdentity(
+          groupData,
+          data.fromUid,
+          data.fromName
+        )
+
+        && data.toName is string
+        && data.toName.size() >= 2
+        && data.toName.size() <= 40
+
+        && hasMemberIdentity(
+          groupData,
+          data.toUid,
+          data.toName
+        )
+
+        && data.message is string
+        && data.message.size() <= 200
+
+        && data.status == 'unread'
+
+        && data.createdAt == request.time
+
+        && data.readAt == null;
+    }
+
+
+    // ==========================================
+    // 9A. SETTLEMENT RECORD VALIDATION
+    //     groups/{groupId}/settlements/{settlementId}
+    //
+    //     CONVENTION: the recipient's notification document ID
+    //     is identical to the settlementId:
+    //     users/{toUid}/notifications/{settlementId}
+    //     This is what lets each document verify the other with
+    //     getAfter() inside the same atomic batch.
+    // ==========================================
+
+    function validSettlementCreation(groupId, settlementId) {
+      let data = request.resource.data;
+
+      let groupPath =
+        /databases/$(database)/documents/groups/$(groupId);
+
+      let groupData = get(groupPath).data;
+
+      let notificationPath =
+        /databases/$(database)/documents/users/$(data.toUid)/notifications/$(settlementId);
+
+      let notification = getAfter(notificationPath).data;
+
+      return isGroupMember(groupId)
+
+        && data.keys().hasAll([
+          'groupId',
+          'groupName',
+          'fromUid',
+          'fromName',
+          'toUid',
+          'toName',
+          'amountPaise',
+          'status',
+          'createdAt',
+          'resolvedAt'
+        ])
+
+        && data.keys().hasOnly([
+          'groupId',
+          'groupName',
+          'fromUid',
+          'fromName',
+          'toUid',
+          'toName',
+          'amountPaise',
+          'status',
+          'createdAt',
+          'resolvedAt'
+        ])
+
+        // Group identity must match the real group.
+        && data.groupId == groupId
+        && data.groupName == groupData.name
+
+        // The payer is the authenticated member.
+        && data.fromUid == request.auth.uid
+
+        // The recipient is a different member of the same group.
+        && data.toUid is string
+        && data.toUid != data.fromUid
+        && data.toUid in groupData.memberIds
+
+        // Names must match actual group member records.
+        && data.fromName is string
+        && data.fromName.size() >= 2
+        && data.fromName.size() <= 40
+        && hasMemberIdentity(
+          groupData,
+          data.fromUid,
+          data.fromName
+        )
+
+        && data.toName is string
+        && data.toName.size() >= 2
+        && data.toName.size() <= 40
+        && hasMemberIdentity(
+          groupData,
+          data.toUid,
+          data.toName
+        )
+
+        // Amount is a positive integer number of paise.
+        && data.amountPaise is int
+        && data.amountPaise > 0
+
+        // Initial state.
+        && data.status == 'pending'
+        && data.createdAt == request.time
+        && data.resolvedAt == null
+
+        // The same batch must create the matching notification.
+        && notification.type == 'settlement_confirmation'
+        && notification.settlementId == settlementId
+        && notification.groupId == groupId
+        && notification.groupName == data.groupName
+        && notification.fromUid == data.fromUid
+        && notification.fromName == data.fromName
+        && notification.toUid == data.toUid
+        && notification.toName == data.toName
+        && notification.amountPaise == data.amountPaise
+        && notification.status == 'unread';
+    }
+
+    function validSettlementResolution(groupId, settlementId) {
+      let before = resource.data;
+      let after = request.resource.data;
+
+      let notificationPath =
+        /databases/$(database)/documents/users/$(before.toUid)/notifications/$(settlementId);
+
+      let notification = getAfter(notificationPath).data;
+
+      return isGroupMember(groupId)
+
+        // Only the recipient may resolve, never the payer.
+        && request.auth.uid == before.toUid
+        && request.auth.uid != before.fromUid
+
+        // Only a pending settlement can be resolved, once.
+        && before.status == 'pending'
+        && after.status in [
+          'confirmed',
+          'rejected'
+        ]
+
+        // Everything else is immutable.
+        && after.diff(before).affectedKeys().hasOnly([
+          'status',
+          'resolvedAt'
+        ])
+
+        && after.resolvedAt == request.time
+
+        // The same batch must resolve the recipient's notification
+        // with the matching status.
+        && notification.type == 'settlement_confirmation'
+        && notification.settlementId == settlementId
+        && notification.toUid == request.auth.uid
+        && notification.fromUid == before.fromUid
+        && notification.amountPaise == before.amountPaise
+        && (
+          (after.status == 'confirmed'
+            && notification.status == 'settled')
+          ||
+          (after.status == 'rejected'
+            && notification.status == 'dismissed')
+        );
+    }
+
+
+    // ==========================================
+    // 9B. SETTLEMENT NOTIFICATION VALIDATION
+    //     (type == 'settlement_confirmation')
+    // ==========================================
+
+    function validSettlementNotification(userId, notificationId) {
+      let data = request.resource.data;
+
+      let groupPath =
+        /databases/$(database)/documents/groups/$(data.groupId);
+
+      let groupData = get(groupPath).data;
+
+      let settlementPath =
+        /databases/$(database)/documents/groups/$(data.groupId)/settlements/$(data.settlementId);
+
+      let settlement = getAfter(settlementPath).data;
+
+      return isSignedIn()
+
+        && data.keys().hasAll([
+          'type',
+          'settlementId',
+          'amountPaise',
+          'groupId',
+          'groupName',
+          'fromUid',
+          'fromName',
+          'toUid',
+          'toName',
+          'message',
+          'status',
+          'createdAt',
+          'readAt'
+        ])
+
+        && data.keys().hasOnly([
+          'type',
+          'settlementId',
+          'amountPaise',
+          'groupId',
+          'groupName',
+          'fromUid',
+          'fromName',
+          'toUid',
+          'toName',
+          'message',
+          'status',
+          'createdAt',
+          'readAt'
+        ])
+
+        && data.type == 'settlement_confirmation'
+
+        && data.groupId is string
+        && data.groupName == groupData.name
+
+        // One notification per settlement: document ID == settlementId.
+        && data.settlementId is string
+        && data.settlementId == notificationId
+
+        // Sender is the authenticated group member.
+        && data.fromUid == request.auth.uid
+        && data.fromUid in groupData.memberIds
+
+        // Recipient is a different member and owns this inbox.
+        && data.toUid == userId
+        && data.toUid != data.fromUid
+        && data.toUid in groupData.memberIds
+
+        && data.fromName is string
+        && data.fromName.size() >= 2
+        && data.fromName.size() <= 40
+        && hasMemberIdentity(
+          groupData,
+          data.fromUid,
+          data.fromName
+        )
+
+        && data.toName is string
+        && data.toName.size() >= 2
+        && data.toName.size() <= 40
+        && hasMemberIdentity(
+          groupData,
+          data.toUid,
+          data.toName
+        )
+
+        && data.amountPaise is int
+        && data.amountPaise > 0
+
+        && data.message is string
+        && data.message.size() <= 200
+
+        && data.status == 'unread'
+        && data.createdAt == request.time
+        && data.readAt == null
+
+        // The same batch must create the matching pending settlement.
+        && settlement.groupId == data.groupId
+        && settlement.groupName == data.groupName
+        && settlement.fromUid == data.fromUid
+        && settlement.fromName == data.fromName
+        && settlement.toUid == data.toUid
+        && settlement.toName == data.toName
+        && settlement.amountPaise == data.amountPaise
+        && settlement.status == 'pending'
+        && settlement.resolvedAt == null;
+    }
+
+    // For a settlement notification going to 'settled' or 'dismissed',
+    // the settlement must reach the matching final status in the same
+    // batch.
+    function settlementResolutionMatches(notificationId) {
+      let before = resource.data;
+      let after = request.resource.data;
+
+      let settlementPath =
+        /databases/$(database)/documents/groups/$(before.groupId)/settlements/$(before.settlementId);
+
+      let settlement = getAfter(settlementPath).data;
+
+      return before.settlementId == notificationId
+        && settlement.toUid == request.auth.uid
+        && settlement.fromUid == before.fromUid
+        && settlement.amountPaise == before.amountPaise
+        && (
+          (after.status == 'settled'
+            && settlement.status == 'confirmed')
+          ||
+          (after.status == 'dismissed'
+            && settlement.status == 'rejected')
+        );
+    }
+
+    // Ordinary notifications keep their existing behavior. Settlement
+    // notifications may be marked 'read' alone, but can be resolved
+    // only together with their settlement.
+    function notificationStatusChangeAllowed(notificationId) {
+      return resource.data.get('type', '') != 'settlement_confirmation'
+        || request.resource.data.status == 'read'
+        || settlementResolutionMatches(notificationId);
+    }
+
+
+    // ==========================================
+    // 10. GROUPS
+    // ==========================================
+
+    match /groups/{groupId} {
+
+      // Single-document read: only members.
+      allow get: if isSignedIn()
+        && request.auth.uid in resource.data.memberIds;
+
+      // Collection queries: the same test, written in the exact form
+      // Firestore can prove against
+      //   .where('memberIds', arrayContains: uid)
+      // Do not add extra type guards (such as "is list") here: the
+      // query analyzer must be able to prove the condition from the
+      // query constraints alone.
+      allow list: if isSignedIn()
+        && request.auth.uid in resource.data.memberIds;
+
+      // Create groups with the authenticated owner.
+      allow create: if validGroupCreation();
+
+      // Only secure invitation acceptance can update membership.
+      allow update: if validGroupJoin(groupId);
+
+      // Group deletion disabled.
+      allow delete: if false;
+
+
+      // ----------------------------------------
+      // GROUP EXPENSES
+      // ----------------------------------------
+
+      match /expenses/{expenseId} {
+
+        allow get, list: if isGroupMember(groupId);
+
+        allow create: if validExpense(groupId);
+
+        // Editing and deletion are not enabled yet.
+        allow update, delete: if false;
+      }
+
+
+      // ----------------------------------------
+      // MEMBER PAYMENT DETAILS
+      // ----------------------------------------
+      // Each member writes only their own payment details.
+      // Other members may read a specific member's details
+      // inside this group, but cannot enumerate this collection.
+      match /memberPaymentDetails/{memberId} {
+
+        allow get: if isGroupMember(groupId);
+        allow list: if false;
+
+        allow create, update: if isGroupMember(groupId)
+          && request.auth.uid == memberId
+          && validGroupPaymentDetails();
+
+        allow delete: if false;
+      }
+
+
+      // ----------------------------------------
+      // GROUP SETTLEMENTS
+      // ----------------------------------------
+
+      match /settlements/{settlementId} {
+
+        // Members read settlements to calculate balances.
+        allow get, list: if isGroupMember(groupId);
+
+        // Created together with the recipient's notification.
+        allow create: if validSettlementCreation(
+          groupId,
+          settlementId
+        );
+
+        // Recipient confirms or rejects, together with their
+        // notification update.
+        allow update: if validSettlementResolution(
+          groupId,
+          settlementId
+        );
+
+        // Settlement records can never be deleted by clients.
+        allow delete: if false;
+      }
+
+
+      // ----------------------------------------
+      // GROUP INVITATIONS
+      // ----------------------------------------
+
+      match /invitations/{invitationId} {
+
+        // Signed-in users with the link can read a
+        // pending invitation that has not expired.
+        allow get: if isSignedIn()
+          && resource.data.status == 'pending'
+          && resource.data.expiresAt > request.time;
+
+        // Invitations cannot be enumerated.
+        allow list: if false;
+
+        allow create: if validInvitationCreation(groupId);
+
+        allow update: if validInvitationAcceptance(
+          groupId,
+          invitationId
+        );
+
+        // Only the creator, while still a group member,
+        // can revoke an unused invitation.
+        allow delete: if isGroupMember(groupId)
+          && resource.data.createdBy == request.auth.uid
+          && resource.data.status == 'pending';
+      }
+
+
+      // ----------------------------------------
+      // ONE-TIME JOIN CLAIMS
+      // ----------------------------------------
+
+      match /joinClaims/{userId} {
+
+        allow create: if isSignedIn()
+          && request.auth.uid == userId
+          && validJoinClaim(groupId);
+
+        // Claim records cannot be read or modified by clients.
+        allow get, list, update, delete: if false;
+      }
+    }
+
+
+    // ==========================================
+    // 11. USER PROFILES
+    // ==========================================
+
+    match /profiles/{userId} {
+
+      // Own profile or discoverable public profile.
+      allow get: if isSignedIn()
+        && (
+          request.auth.uid == userId
+          || resource.data.discoverable == true
+        );
+
+      // Discovery queries must filter discoverable == true.
+      allow list: if isSignedIn()
+        && resource.data.discoverable == true;
+
+      // Users create their own profile.
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && validProfile()
+        && request.resource.data.createdAt == request.time;
+
+      // Users update only their own profile.
+      // The creation timestamp cannot be changed.
+      allow update: if isSignedIn()
+        && request.auth.uid == userId
+        && validProfile()
+        && request.resource.data.createdAt == resource.data.createdAt;
+
+      allow delete: if isSignedIn()
+        && request.auth.uid == userId;
+    }
+
+
+    // ==========================================
+    // 11A. PRIVATE PAYMENT PROFILES
+    // ==========================================
+    // Canonical UPI ID and phone number are never included in
+    // discoverable /profiles documents.
+    match /privatePaymentProfiles/{userId} {
+
+      allow get: if isSignedIn()
+        && request.auth.uid == userId;
+
+      allow list: if false;
+
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && validPrivatePaymentProfile()
+        && request.resource.data.createdAt == request.time;
+
+      allow update: if isSignedIn()
+        && request.auth.uid == userId
+        && validPrivatePaymentProfile()
+        && request.resource.data.createdAt == resource.data.createdAt;
+
+      allow delete: if isSignedIn()
+        && request.auth.uid == userId;
+    }
+
+
+    // ==========================================
+    // 12. USER NOTIFICATIONS
+    // ==========================================
+
+    match /users/{userId}/notifications/{notificationId} {
+
+      // Only the notification recipient can read their inbox.
+      allow get, list: if isSignedIn()
+        && request.auth.uid == userId;
+
+      // A valid group member can send either an ordinary settle-up
+      // reminder or a settlement confirmation request to another
+      // member of the same group.
+      allow create: if isSignedIn()
+        && (
+          (
+            request.resource.data.get('type', '') == 'settle_up'
+            && validSettleUpNotification(userId)
+          )
+          ||
+          (
+            request.resource.data.get('type', '') == 'settlement_confirmation'
+            && validSettlementNotification(userId, notificationId)
+          )
+        );
+
+      // Recipient may change only the status and read timestamp.
+      allow update: if isSignedIn()
+        && request.auth.uid == userId
+
+        && resource.data.status in [
+          'unread',
+          'read'
+        ]
+
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            'status',
+            'readAt'
+          ])
+
+        && request.resource.data.status in [
+          'read',
+          'dismissed',
+          'settled'
+        ]
+
+        && request.resource.data.readAt == request.time
+
+        && notificationStatusChangeAllowed(notificationId);
+
+      // Notification deletion disabled.
+      allow delete: if false;
+    }
+
+  }
+}

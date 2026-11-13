@@ -1,13 +1,13 @@
 import 'package:flutter/cupertino.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../expenses/data/repositories/expense_repository.dart';
+import '../../../expenses/domain/models/expense.dart';
 import '../../data/repositories/group_repository.dart';
 import '../../domain/models/group.dart';
-import '../../domain/models/group_invitation.dart';
 import '../widgets/group_list_card.dart';
 import 'create_group_screen.dart';
 import 'group_details_screen.dart';
-import 'join_group_screen.dart';
 
 class GroupsScreen extends StatefulWidget {
   const GroupsScreen({super.key});
@@ -55,106 +55,13 @@ class _GroupsScreenState extends State<GroupsScreen> {
     );
   }
 
-  Future<void> _openJoinGroup() async {
-    final controller = TextEditingController();
-
-    final code = await showCupertinoDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        return CupertinoAlertDialog(
-          title: const Text('Join a Group'),
-          content: Padding(
-            padding: const EdgeInsets.only(top: 14),
-            child: CupertinoTextField(
-              controller: controller,
-              placeholder: 'Paste invitation code',
-              autofocus: true,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppColors.border),
-              ),
-            ),
-          ),
-          actions: [
-            CupertinoDialogAction(
-              onPressed: () {
-                Navigator.pop(dialogContext);
-              },
-              child: const Text('Cancel'),
-            ),
-            CupertinoDialogAction(
-              isDefaultAction: true,
-              onPressed: () {
-                Navigator.pop(dialogContext, controller.text.trim());
-              },
-              child: const Text('Continue'),
-            ),
-          ],
-        );
-      },
-    );
-
-    controller.dispose();
-
-    if (!mounted || code == null || code.isEmpty) return;
-
-    try {
-      final parts = GroupInvitation.parseInvitationCode(code);
-
-      final joined = await Navigator.push<bool>(
-        context,
-        CupertinoPageRoute(
-          builder: (context) =>
-              JoinGroupScreen(groupId: parts[0], invitationId: parts[1]),
-        ),
-      );
-
-      // The Firestore groups stream refreshes automatically
-      // after a successful invitation acceptance.
-      if (joined == true && mounted) {
-        // No manual reload needed.
-      }
-    } on FormatException catch (error) {
-      if (!mounted) return;
-      _showMessage(error.message);
-    } catch (error) {
-      if (!mounted) return;
-      _showMessage(error.toString());
-    }
-  }
-
-  void _showMessage(String message) {
-    showCupertinoDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return CupertinoAlertDialog(
-          title: const Text('Invitation'),
-          content: Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(message),
-          ),
-          actions: [
-            CupertinoDialogAction(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('OK'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   List<Group> _filterGroups(List<Group> groups) {
     return groups.where((group) {
       final matchesCategory =
           selectedCategory == 'All' || group.category == selectedCategory;
-
       final matchesSearch = group.name.toLowerCase().contains(
         searchQuery.trim().toLowerCase(),
       );
-
       return matchesCategory && matchesSearch;
     }).toList();
   }
@@ -181,20 +88,10 @@ class _GroupsScreenState extends State<GroupsScreen> {
       navigationBar: CupertinoNavigationBar(
         middle: const Text('Your Groups'),
         backgroundColor: AppColors.background.withValues(alpha: 0.9),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CupertinoButton(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              onPressed: _openJoinGroup,
-              child: const Icon(CupertinoIcons.link, color: AppColors.primary),
-            ),
-            CupertinoButton(
-              padding: EdgeInsets.zero,
-              onPressed: _openCreateGroup,
-              child: const Icon(CupertinoIcons.add, color: AppColors.primary),
-            ),
-          ],
+        trailing: CupertinoButton(
+          padding: EdgeInsets.zero,
+          onPressed: _openCreateGroup,
+          child: const Icon(CupertinoIcons.add, color: AppColors.primary),
         ),
       ),
       child: SafeArea(
@@ -206,31 +103,9 @@ class _GroupsScreenState extends State<GroupsScreen> {
             }
 
             if (snapshot.hasError) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'Unable to load your groups.',
-                        style: TextStyle(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        snapshot.error.toString(),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              return _ErrorState(
+                message: 'Unable to load your groups.',
+                details: snapshot.error.toString(),
               );
             }
 
@@ -240,7 +115,6 @@ class _GroupsScreenState extends State<GroupsScreen> {
             return ListView(
               padding: const EdgeInsets.all(20),
               children: [
-                // Create group banner
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -290,23 +164,15 @@ class _GroupsScreenState extends State<GroupsScreen> {
                     ],
                   ),
                 ),
-
                 const SizedBox(height: 24),
-
-                // Search
                 CupertinoSearchTextField(
                   placeholder: 'Search groups...',
                   backgroundColor: AppColors.surface,
                   borderRadius: BorderRadius.circular(14),
                   padding: const EdgeInsets.all(12),
-                  onChanged: (value) {
-                    setState(() => searchQuery = value);
-                  },
+                  onChanged: (value) => setState(() => searchQuery = value),
                 ),
-
                 const SizedBox(height: 18),
-
-                // Categories
                 SizedBox(
                   height: 36,
                   child: ListView(
@@ -317,20 +183,14 @@ class _GroupsScreenState extends State<GroupsScreen> {
                         child: _CategoryChip(
                           title: category,
                           selected: selectedCategory == category,
-                          onTap: () {
-                            setState(() {
-                              selectedCategory = category;
-                            });
-                          },
+                          onTap: () =>
+                              setState(() => selectedCategory = category),
                         ),
                       );
                     }).toList(),
                   ),
                 ),
-
                 const SizedBox(height: 20),
-
-                // Group balances
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -341,7 +201,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'GROUP BALANCES',
+                        'GROUP EXPENSES',
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w600,
@@ -350,7 +210,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
                       ),
                       SizedBox(height: 6),
                       Text(
-                        'Balances will appear after you add expenses.',
+                        'Each group shows the total of its recorded expenses. Totals update automatically.',
                         style: TextStyle(
                           fontSize: 12,
                           color: AppColors.sageDark,
@@ -359,9 +219,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
                     ],
                   ),
                 ),
-
                 const SizedBox(height: 24),
-
                 Text(
                   selectedCategory == 'All' ? 'All Groups' : selectedCategory,
                   style: const TextStyle(
@@ -370,59 +228,16 @@ class _GroupsScreenState extends State<GroupsScreen> {
                     color: AppColors.textPrimary,
                   ),
                 ),
-
                 const SizedBox(height: 14),
-
                 if (visibleGroups.isEmpty)
-                  Container(
-                    padding: const EdgeInsets.all(24),
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: AppColors.border),
-                    ),
-                    child: Column(
-                      children: [
-                        const Icon(
-                          CupertinoIcons.person_2,
-                          size: 30,
-                          color: AppColors.textSecondary,
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          allGroups.isEmpty
-                              ? 'No groups yet'
-                              : 'No groups found',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          allGroups.isEmpty
-                              ? 'Create your first group to get started.'
-                              : 'Try another name or category.',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
+                  _EmptyGroupsState(hasGroups: allGroups.isNotEmpty)
                 else
                   ...visibleGroups.map((group) {
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 12),
-                      child: GroupListCard(
+                      child: _LiveGroupCard(
                         group: group,
-                        activity: 'Group created',
-                        amount: '—',
-                        status: 'No expenses',
                         icon: _groupIcon(group.category),
-                        amountColor: AppColors.textSecondary,
-                        iconBackground: AppColors.secondary,
                         onTap: () => _openGroupDetails(group),
                       ),
                     );
@@ -430,6 +245,180 @@ class _GroupsScreenState extends State<GroupsScreen> {
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+class _LiveGroupCard extends StatefulWidget {
+  final Group group;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _LiveGroupCard({
+    required this.group,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  State<_LiveGroupCard> createState() => _LiveGroupCardState();
+}
+
+class _LiveGroupCardState extends State<_LiveGroupCard> {
+  late final Stream<List<Expense>> _expensesStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _expensesStream = ExpenseRepository().watchGroupExpenses(widget.group.id);
+  }
+
+  String _formatPaise(int paise) {
+    final rupees = paise ~/ 100;
+    final cents = (paise % 100).toString().padLeft(2, '0');
+    return cents == '00' ? '₹$rupees' : '₹$rupees.$cents';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<Expense>>(
+      stream: _expensesStream,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return GroupListCard(
+            group: widget.group,
+            activity: 'Expenses unavailable',
+            amount: '—',
+            status: 'Could not load',
+            icon: widget.icon,
+            amountColor: AppColors.textSecondary,
+            iconBackground: AppColors.secondary,
+            onTap: widget.onTap,
+          );
+        }
+
+        if (!snapshot.hasData) {
+          return GroupListCard(
+            group: widget.group,
+            activity: 'Loading group expenses',
+            amount: '—',
+            status: 'Loading',
+            icon: widget.icon,
+            amountColor: AppColors.textSecondary,
+            iconBackground: AppColors.secondary,
+            onTap: widget.onTap,
+          );
+        }
+
+        final expenses = snapshot.data ?? <Expense>[];
+        final totalPaise = expenses.fold<int>(
+          0,
+          (total, expense) => total + expense.amountPaise,
+        );
+
+        final latestExpense = expenses.isEmpty
+            ? null
+            : (List<Expense>.from(
+                expenses,
+              )..sort((a, b) => b.createdAt.compareTo(a.createdAt))).first;
+
+        return GroupListCard(
+          group: widget.group,
+          activity: latestExpense == null
+              ? 'Group created'
+              : 'Latest: ${latestExpense.title}',
+          amount: expenses.isEmpty ? '—' : _formatPaise(totalPaise),
+          status: expenses.isEmpty ? 'No expenses' : 'Total expenses',
+          icon: widget.icon,
+          amountColor: expenses.isEmpty
+              ? AppColors.textSecondary
+              : AppColors.primary,
+          iconBackground: AppColors.secondary,
+          onTap: widget.onTap,
+        );
+      },
+    );
+  }
+}
+
+class _EmptyGroupsState extends StatelessWidget {
+  final bool hasGroups;
+
+  const _EmptyGroupsState({required this.hasGroups});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        children: [
+          const Icon(
+            CupertinoIcons.person_2,
+            size: 30,
+            color: AppColors.textSecondary,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            hasGroups ? 'No groups found' : 'No groups yet',
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            hasGroups
+                ? 'Try another name or category.'
+                : 'Create your first group to get started.',
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ErrorState extends StatelessWidget {
+  final String message;
+  final String details;
+
+  const _ErrorState({required this.message, required this.details});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              message,
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              details,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 11,
+              ),
+            ),
+          ],
         ),
       ),
     );

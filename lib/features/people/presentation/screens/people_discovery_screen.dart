@@ -24,14 +24,14 @@ class _PeopleDiscoveryScreenState extends State<PeopleDiscoveryScreen> {
   String _searchedTag = '';
 
   static const Map<String, String> _avatars = {
-    'student': '🧑‍🎓',
-    'explorer': '🧭',
-    'traveler': '🧳',
-    'artist': '🎨',
-    'gamer': '🎮',
-    'reader': '📚',
-    'athlete': '⚽',
-    'coffee': '☕',
+    'student': '🗿',
+    'explorer': '😼',
+    'traveler': '😽',
+    'artist': '🐹',
+    'gamer': '🐼',
+    'reader': '🐨',
+    'chick': '🐣',
+    'octopus': '🐙',
   };
 
   @override

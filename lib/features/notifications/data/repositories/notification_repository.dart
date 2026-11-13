@@ -23,8 +23,7 @@ class NotificationRepository {
     return _db.collection('users').doc(uid).collection('notifications');
   }
 
-  // Existing ordinary settle-up reminder.
-  // Keep its random notification ID.
+  // Send an ordinary settle-up reminder.
   Future<void> sendSettleUpRequest({
     required Group group,
     required GroupMember recipient,
@@ -69,7 +68,7 @@ class NotificationRepository {
         });
   }
 
-  // Create a settlement and matching notification atomically.
+  // Create a pending settlement and its matching notification atomically.
   Future<String> sendPaymentConfirmationRequest({
     required Group group,
     required GroupMember recipient,
@@ -93,7 +92,6 @@ class NotificationRepository {
     }
 
     _validateRecipient(group, recipient, user.uid);
-
     _validateMemberName(sender.displayName);
     _validateMemberName(recipient.displayName);
 
@@ -108,8 +106,7 @@ class NotificationRepository {
     // Generate settlement ID first.
     final settlementRef = groupRef.collection('settlements').doc();
 
-    // IMPORTANT:
-    // Notification document ID MUST equal settlement ID.
+    // The notification ID MUST equal the settlement ID.
     final notificationRef = _db
         .collection('users')
         .doc(recipient.userId)
@@ -118,7 +115,7 @@ class NotificationRepository {
 
     final batch = _db.batch();
 
-    // 1. Create pending settlement.
+    // Create pending settlement.
     batch.set(settlementRef, {
       'groupId': group.id,
       'groupName': group.name,
@@ -132,7 +129,7 @@ class NotificationRepository {
       'resolvedAt': null,
     });
 
-    // 2. Create matching recipient notification.
+    // Create matching recipient notification.
     batch.set(notificationRef, {
       'type': 'settlement_confirmation',
       'settlementId': settlementRef.id,
@@ -154,7 +151,7 @@ class NotificationRepository {
     return settlementRef.id;
   }
 
-  // Recipient confirms or rejects the payment.
+  // Recipient confirms or rejects a payment.
   Future<void> respondToSettlement({
     required AppNotification notification,
     required bool confirm,
@@ -183,13 +180,13 @@ class NotificationRepository {
 
     final batch = _db.batch();
 
-    // 1. Resolve settlement.
+    // Update settlement status.
     batch.update(settlementRef, {
       'status': confirm ? 'confirmed' : 'rejected',
       'resolvedAt': FieldValue.serverTimestamp(),
     });
 
-    // 2. Resolve matching notification.
+    // Update matching notification status.
     batch.update(notificationRef, {
       'status': confirm ? 'settled' : 'dismissed',
       'readAt': FieldValue.serverTimestamp(),
@@ -198,7 +195,7 @@ class NotificationRepository {
     await batch.commit();
   }
 
-  // Listen to notifications.
+  // Listen to the current user's notifications.
   Stream<List<AppNotification>> watchMyNotifications() {
     return _myNotifications()
         .orderBy('createdAt', descending: true)

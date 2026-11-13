@@ -1,11 +1,18 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
+
 import 'package:flutter/cupertino.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../expenses/data/repositories/expense_repository.dart';
 import '../../../expenses/domain/models/expense.dart';
+import '../../../expenses/domain/models/group_settlement.dart';
 import '../../../expenses/domain/services/balance_calculator.dart';
+import '../../../expenses/data/repositories/group_settlement_repository.dart';
+import '../../../expenses/presentation/screens/settle_now_screen.dart';
 import '../../../notifications/data/repositories/notification_repository.dart';
+import '../../../profile/data/repositories/payment_details_repository.dart';
 import '../../domain/models/group.dart';
 import '../../domain/models/group_member.dart';
 import 'group_invitation_screen.dart';
@@ -21,7 +28,10 @@ class GroupDetailsScreen extends StatefulWidget {
 
 class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
   late final Stream<List<Expense>> expensesStream;
+  late final Stream<List<GroupSettlement>> settlementsStream;
   late final NotificationRepository notificationRepository;
+  late final GroupSettlementRepository settlementRepository;
+  late final PaymentDetailsRepository paymentDetailsRepository;
 
   final Set<String> _sendingReminderIds = {};
 
@@ -31,6 +41,12 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
 
     expensesStream = ExpenseRepository().watchGroupExpenses(widget.group.id);
     notificationRepository = NotificationRepository();
+    settlementRepository = GroupSettlementRepository();
+    settlementsStream = settlementRepository.watchGroupSettlements(
+      widget.group.id,
+    );
+    paymentDetailsRepository = PaymentDetailsRepository();
+    unawaited(_syncMyPaymentDetails());
   }
 
   String _formatPaise(int paise) {
@@ -109,6 +125,47 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
         setState(() => _sendingReminderIds.remove(recipient.userId));
       }
     }
+  }
+
+  Future<void> _syncMyPaymentDetails() async {
+    try {
+      await paymentDetailsRepository.syncMyPaymentDetailsToGroup(
+        widget.group.id,
+      );
+    } catch (error) {
+      debugPrint('Could not sync payment details for this group: $error');
+    }
+  }
+
+  Future<void> _openSettleNow(SettlementSuggestion settlement) async {
+    GroupMember? recipient;
+    for (final member in widget.group.members) {
+      if (member.userId == settlement.toUserId) {
+        recipient = member;
+        break;
+      }
+    }
+
+    if (recipient == null) {
+      await _showReminderFeedback(
+        title: 'Member not found',
+        message: 'The payment recipient is no longer in this group.',
+      );
+      return;
+    }
+
+    final selectedRecipient = recipient;
+
+    Navigator.push(
+      context,
+      CupertinoPageRoute(
+        builder: (_) => SettleNowScreen(
+          group: widget.group,
+          recipient: selectedRecipient,
+          settlement: settlement,
+        ),
+      ),
+    );
   }
 
   Widget _memberCard(GroupMember member) {
@@ -314,7 +371,12 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
     );
   }
 
-  Widget _settlementSection(List<SettlementSuggestion> settlements) {
+  Widget _settlementSection(
+    List<SettlementSuggestion> settlements,
+    List<GroupSettlement> recordedSettlements,
+  ) {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -327,7 +389,6 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
           ),
         ),
         const SizedBox(height: 12),
-
         if (settlements.isEmpty)
           Container(
             width: double.infinity,
@@ -347,6 +408,14 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
           )
         else
           ...settlements.map((settlement) {
+            final canPay = settlement.fromUserId == currentUserId;
+            final hasPendingRequest = recordedSettlements.any(
+              (record) =>
+                  record.status == 'pending' &&
+                  record.fromUid == settlement.fromUserId &&
+                  record.toUid == settlement.toUserId,
+            );
+
             return Container(
               margin: const EdgeInsets.only(bottom: 10),
               padding: const EdgeInsets.all(14),
@@ -388,24 +457,60 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
                       ],
                     ),
                   ),
-                  Text(
-                    _formatPaise(settlement.amountPaise),
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.primary,
-                    ),
+                  const SizedBox(width: 8),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        _formatPaise(settlement.amountPaise),
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                      if (canPay && hasPendingRequest) ...[
+                        const SizedBox(height: 7),
+                        const Text(
+                          'Awaiting confirmation',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ] else if (canPay) ...[
+                        const SizedBox(height: 7),
+                        CupertinoButton.filled(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 7,
+                          ),
+                          borderRadius: BorderRadius.circular(9),
+                          onPressed: () => _openSettleNow(settlement),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(CupertinoIcons.arrow_up_right, size: 14),
+                              SizedBox(width: 5),
+                              Text(
+                                'Settle Now',
+                                style: TextStyle(fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),
             );
           }),
-
         if (settlements.isNotEmpty)
           const Padding(
             padding: EdgeInsets.only(top: 4),
             child: Text(
-              'These are suggested payments. No settlement is recorded automatically.',
+              'Only payments confirmed by the recipient reduce group balances.',
               style: TextStyle(fontSize: 10, color: AppColors.textSecondary),
             ),
           ),
@@ -489,181 +594,188 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
       child: SafeArea(
         child: StreamBuilder<List<Expense>>(
           stream: expensesStream,
-          builder: (context, snapshot) {
-            final expenses = snapshot.data ?? <Expense>[];
+          builder: (context, expenseSnapshot) {
+            return StreamBuilder<List<GroupSettlement>>(
+              stream: settlementsStream,
+              builder: (context, settlementSnapshot) {
+                final expenses = expenseSnapshot.data ?? <Expense>[];
+                final settlements =
+                    settlementSnapshot.data ?? <GroupSettlement>[];
 
-            GroupBalanceSummary? summary;
-            String? calculationError;
+                GroupBalanceSummary? summary;
+                String? calculationError;
 
-            if (snapshot.hasData) {
-              try {
-                summary = BalanceCalculator.calculate(
-                  group: group,
-                  expenses: expenses,
-                );
-              } catch (error) {
-                calculationError = error.toString();
-              }
-            }
+                if (expenseSnapshot.hasData && settlementSnapshot.hasData) {
+                  try {
+                    summary = BalanceCalculator.calculate(
+                      group: group,
+                      expenses: expenses,
+                      settlements: settlements,
+                    );
+                  } catch (error) {
+                    calculationError = error.toString();
+                  }
+                }
 
-            return ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                // Group information
-                Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: AppColors.secondary,
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        group.category,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.primary,
-                        ),
+                final waitingForData =
+                    (!expenseSnapshot.hasData &&
+                        expenseSnapshot.connectionState ==
+                            ConnectionState.waiting) ||
+                    (!settlementSnapshot.hasData &&
+                        settlementSnapshot.connectionState ==
+                            ConnectionState.waiting);
+
+                return ListView(
+                  padding: const EdgeInsets.all(20),
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(
+                        color: AppColors.secondary,
+                        borderRadius: BorderRadius.circular(18),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        group.name,
-                        style: const TextStyle(
-                          fontSize: 21,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            group.category,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            group.name,
+                            style: const TextStyle(
+                              fontSize: 21,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            '${group.memberCount} members • ${group.currencyCode}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 12),
-                      Text(
-                        '${group.memberCount} members • ${group.currencyCode}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                // Invite members
-                CupertinoButton.filled(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  borderRadius: BorderRadius.circular(14),
-                  onPressed: _openInvitation,
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(CupertinoIcons.person_add, size: 18),
-                      SizedBox(width: 9),
-                      Text('Invite Members'),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 28),
-
-                Text(
-                  'Members (${group.memberCount})',
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-
-                const SizedBox(height: 14),
-
-                ...group.members.map(_memberCard),
-
-                const SizedBox(height: 24),
-
-                const Text(
-                  'Group Balances',
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-
-                const SizedBox(height: 14),
-
-                if (snapshot.connectionState == ConnectionState.waiting &&
-                    !snapshot.hasData)
-                  const Center(child: CupertinoActivityIndicator())
-                else if (snapshot.hasError)
-                  Text(
-                    'Unable to calculate balances: ${snapshot.error}',
-                    style: const TextStyle(
-                      color: AppColors.error,
-                      fontSize: 12,
                     ),
-                  )
-                else if (calculationError != null)
-                  Text(
-                    'Balance calculation error: $calculationError',
-                    style: const TextStyle(
-                      color: AppColors.error,
-                      fontSize: 12,
-                    ),
-                  )
-                else if (summary != null) ...[
-                  _balanceCard(summary),
-                  const SizedBox(height: 20),
-                  _settlementSection(summary.settlements),
-                ],
-
-                const SizedBox(height: 28),
-
-                const Text(
-                  'Expense History',
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-
-                const SizedBox(height: 14),
-
-                if (snapshot.hasError)
-                  Text(
-                    'Unable to load expenses: ${snapshot.error}',
-                    style: const TextStyle(
-                      color: AppColors.error,
-                      fontSize: 12,
-                    ),
-                  )
-                else if (snapshot.connectionState == ConnectionState.waiting &&
-                    !snapshot.hasData)
-                  const Center(child: CupertinoActivityIndicator())
-                else if (expenses.isEmpty)
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
+                    const SizedBox(height: 16),
+                    CupertinoButton.filled(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: AppColors.border),
-                    ),
-                    child: const Text(
-                      'No expenses in this group yet.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
+                      onPressed: _openInvitation,
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(CupertinoIcons.person_add, size: 18),
+                          SizedBox(width: 9),
+                          Text('Invite Members'),
+                        ],
                       ),
                     ),
-                  )
-                else
-                  ...expenses.map(_expenseCard),
-
-                const SizedBox(height: 24),
-              ],
+                    const SizedBox(height: 28),
+                    Text(
+                      'Members (${group.memberCount})',
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    ...group.members.map(_memberCard),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'Group Balances',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    if (waitingForData)
+                      const Center(child: CupertinoActivityIndicator())
+                    else if (expenseSnapshot.hasError)
+                      Text(
+                        'Unable to load expenses: ${expenseSnapshot.error}',
+                        style: const TextStyle(
+                          color: AppColors.error,
+                          fontSize: 12,
+                        ),
+                      )
+                    else if (settlementSnapshot.hasError)
+                      Text(
+                        'Unable to load settlements: ${settlementSnapshot.error}',
+                        style: const TextStyle(
+                          color: AppColors.error,
+                          fontSize: 12,
+                        ),
+                      )
+                    else if (calculationError != null)
+                      Text(
+                        'Balance calculation error: $calculationError',
+                        style: const TextStyle(
+                          color: AppColors.error,
+                          fontSize: 12,
+                        ),
+                      )
+                    else if (summary != null) ...[
+                      _balanceCard(summary),
+                      const SizedBox(height: 20),
+                      _settlementSection(summary.settlements, settlements),
+                    ],
+                    const SizedBox(height: 28),
+                    const Text(
+                      'Expense History',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    if (expenseSnapshot.hasError)
+                      Text(
+                        'Unable to load expenses: ${expenseSnapshot.error}',
+                        style: const TextStyle(
+                          color: AppColors.error,
+                          fontSize: 12,
+                        ),
+                      )
+                    else if (!expenseSnapshot.hasData &&
+                        expenseSnapshot.connectionState ==
+                            ConnectionState.waiting)
+                      const Center(child: CupertinoActivityIndicator())
+                    else if (expenses.isEmpty)
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: AppColors.border),
+                        ),
+                        child: const Text(
+                          'No expenses in this group yet.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      )
+                    else
+                      ...expenses.map(_expenseCard),
+                    const SizedBox(height: 24),
+                  ],
+                );
+              },
             );
           },
         ),
