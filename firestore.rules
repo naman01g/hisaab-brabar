@@ -342,7 +342,29 @@ service cloud.firestore {
     // 5. INVITATION CREATION VALIDATION
     // ==========================================
 
-    function validInvitationCreation(groupId) {
+    // A targeted invitation must be created in the same batch as its
+    // recipient notification (users/{invitedToUid}/notifications/{invitationId}).
+    // The notification must be NEW in this request: absent before, present
+    // after.
+    function targetedInvitationHasNotification(groupId, invitationId) {
+      let data = request.resource.data;
+
+      let notificationPath =
+        /databases/$(database)/documents/users/$(data.invitedToUid)/notifications/$(invitationId);
+
+      let notification = getAfter(notificationPath).data;
+
+      return !exists(notificationPath)
+        && existsAfter(notificationPath)
+        && notification.type == 'group_invitation'
+        && notification.invitationId == invitationId
+        && notification.groupId == groupId
+        && notification.fromUid == data.createdBy
+        && notification.toUid == data.invitedToUid
+        && notification.status == 'unread';
+    }
+
+    function validInvitationCreation(groupId, invitationId) {
       let data = request.resource.data;
 
       let groupPath =
@@ -372,7 +394,8 @@ service cloud.firestore {
           'expiresAt',
           'status',
           'acceptedBy',
-          'acceptedAt'
+          'acceptedAt',
+          'invitedToUid'
         ])
 
         && data.groupId == groupId
@@ -395,14 +418,51 @@ service cloud.firestore {
         && data.acceptedBy == null
         && data.acceptedAt == null
 
+        // General invitations use null. Direct invitations are bound
+        // to one recipient who is not already a member, and must be
+        // created together with their recipient notification.
+        && (
+          data.get('invitedToUid', null) == null
+          || (
+            data.invitedToUid is string
+            && data.invitedToUid != request.auth.uid
+            && !(data.invitedToUid in groupData.memberIds)
+            && targetedInvitationHasNotification(groupId, invitationId)
+          )
+        )
+
         // Do not invite into an already full group.
         && groupData.memberIds.size() < 50;
     }
 
 
     // ==========================================
-    // 6. INVITATION ACCEPTANCE VALIDATION
+    // 6. INVITATION ACCEPTANCE / REJECTION VALIDATION
     // ==========================================
+
+    // For a targeted invitation, the recipient's notification must move
+    // from 'unread' or 'read' to newStatus in the same request.
+    function targetedInvitationNotificationResolved(
+      groupId,
+      invitationId,
+      newStatus
+    ) {
+      let notificationPath =
+        /databases/$(database)/documents/users/$(request.auth.uid)/notifications/$(invitationId);
+
+      let notificationBefore = get(notificationPath).data;
+      let notificationAfter = getAfter(notificationPath).data;
+
+      return notificationBefore.type == 'group_invitation'
+        && notificationBefore.invitationId == invitationId
+        && notificationBefore.groupId == groupId
+        && notificationBefore.toUid == request.auth.uid
+        && notificationBefore.status in [
+          'unread',
+          'read'
+        ]
+        && notificationAfter.status == newStatus;
+    }
 
     function validInvitationAcceptance(
       groupId,
@@ -424,6 +484,21 @@ service cloud.firestore {
         && resource.data.status == 'pending'
 
         && resource.data.expiresAt > request.time
+
+        // Link invitations need no notification. Targeted invitations
+        // may only be accepted by their recipient, together with the
+        // recipient's notification update.
+        && (
+          resource.data.get('invitedToUid', null) == null
+          || (
+            resource.data.invitedToUid == request.auth.uid
+            && targetedInvitationNotificationResolved(
+              groupId,
+              invitationId,
+              'accepted'
+            )
+          )
+        )
 
         // Only acceptance fields may change.
         && request.resource.data.diff(resource.data)
@@ -448,6 +523,34 @@ service cloud.firestore {
         && groupAfter.memberIds.hasAny([
           request.auth.uid
         ]);
+    }
+
+
+    // Reject is available only on targeted invitations. The recipient
+    // cannot alter any invitation fields other than its rejection state,
+    // and must update their notification in the same request.
+    function validInvitationRejection(groupId, invitationId) {
+      let before = resource.data;
+      let after = request.resource.data;
+
+      return isSignedIn()
+        && before.groupId == groupId
+        && before.status == 'pending'
+        && before.invitedToUid == request.auth.uid
+        && before.expiresAt > request.time
+        && after.diff(before).affectedKeys().hasOnly([
+          'status',
+          'rejectedBy',
+          'rejectedAt'
+        ])
+        && after.status == 'rejected'
+        && after.rejectedBy == request.auth.uid
+        && after.rejectedAt == request.time
+        && targetedInvitationNotificationResolved(
+          groupId,
+          invitationId,
+          'rejected'
+        );
     }
 
 
@@ -932,6 +1035,129 @@ service cloud.firestore {
         && settlement.resolvedAt == null;
     }
 
+    // Validate a direct group invitation notification. Its document ID
+    // must equal the invitation ID, and the invitation must be created in
+    // the same atomic batch for the exact recipient.
+    function validGroupInvitationNotification(userId, notificationId) {
+      let data = request.resource.data;
+
+      let groupPath =
+        /databases/$(database)/documents/groups/$(data.groupId);
+      let groupData = get(groupPath).data;
+
+      let profilePath =
+        /databases/$(database)/documents/profiles/$(userId);
+      let recipientProfile = get(profilePath).data;
+
+      let invitationPath =
+        /databases/$(database)/documents/groups/$(data.groupId)/invitations/$(data.invitationId);
+      let invitation = getAfter(invitationPath).data;
+
+      return isSignedIn()
+        && data.keys().hasAll([
+          'type',
+          'invitationId',
+          'groupId',
+          'groupName',
+          'fromUid',
+          'fromName',
+          'toUid',
+          'toName',
+          'message',
+          'status',
+          'createdAt',
+          'readAt'
+        ])
+        && data.keys().hasOnly([
+          'type',
+          'invitationId',
+          'groupId',
+          'groupName',
+          'fromUid',
+          'fromName',
+          'toUid',
+          'toName',
+          'message',
+          'status',
+          'createdAt',
+          'readAt'
+        ])
+        && data.type == 'group_invitation'
+        && data.invitationId is string
+        && data.invitationId == notificationId
+        && data.groupId is string
+        && data.groupName == groupData.name
+
+        // The sender is the signed-in group member.
+        && data.fromUid == request.auth.uid
+        && data.fromUid in groupData.memberIds
+        && data.fromName is string
+        && data.fromName.size() >= 2
+        && data.fromName.size() <= 40
+        && hasMemberIdentity(groupData, data.fromUid, data.fromName)
+
+        // The notification belongs to the intended discoverable user.
+        && data.toUid == userId
+        && data.toUid != data.fromUid
+        && data.toUid is string
+        && recipientProfile.discoverable == true
+        && recipientProfile.displayName == data.toName
+
+        // The invitation must be CREATED IN THIS SAME REQUEST: it did not
+        // exist before and exists after.
+        && !exists(invitationPath)
+        && existsAfter(invitationPath)
+
+        // The corresponding invitation matches this notification.
+        // If the emulator denies direct-invite creation, first inspect the
+        // emulator's rules debug output to see which condition failed. Only
+        // the createdAt comparison below is a candidate for removal, and
+        // only after confirming it is the failing condition: the
+        // exists/existsAfter pair above still enforces same-request creation
+        // and the invitation's own create rule enforces createdAt.
+        && invitation.groupId == data.groupId
+        && invitation.groupName == data.groupName
+        && invitation.createdBy == data.fromUid
+        && invitation.invitedToUid == userId
+        && invitation.status == 'pending'
+        && invitation.createdAt == request.time
+        && invitation.expiresAt > request.time
+        && invitation.expiresAt <= request.time + duration.value(7, 'd')
+
+        && data.message is string
+        && data.message.size() <= 200
+        && data.status == 'unread'
+        && data.createdAt == request.time
+        && data.readAt == null;
+    }
+
+
+    // When a targeted invitation notification is accepted/rejected,
+    // the invitation must be resolved for that recipient in the same batch.
+    function groupInvitationResolutionMatches(notificationId) {
+      let before = resource.data;
+      let after = request.resource.data;
+
+      let invitationPath =
+        /databases/$(database)/documents/groups/$(before.groupId)/invitations/$(before.invitationId);
+      let invitation = getAfter(invitationPath).data;
+
+      return before.invitationId == notificationId
+        && before.toUid == request.auth.uid
+        && invitation.groupId == before.groupId
+        && invitation.invitedToUid == request.auth.uid
+        && (
+          (after.status == 'accepted'
+            && invitation.status == 'accepted'
+            && invitation.acceptedBy == request.auth.uid)
+          ||
+          (after.status == 'rejected'
+            && invitation.status == 'rejected'
+            && invitation.rejectedBy == request.auth.uid)
+        );
+    }
+
+
     // For a settlement notification going to 'settled' or 'dismissed',
     // the settlement must reach the matching final status in the same
     // batch.
@@ -957,13 +1183,19 @@ service cloud.firestore {
         );
     }
 
-    // Ordinary notifications keep their existing behavior. Settlement
-    // notifications may be marked 'read' alone, but can be resolved
-    // only together with their settlement.
+    // Payment and group-invitation notifications may be marked read alone.
+    // Their final states must be paired with the corresponding record update.
     function notificationStatusChangeAllowed(notificationId) {
-      return resource.data.get('type', '') != 'settlement_confirmation'
+      return (
+        resource.data.get('type', '') != 'settlement_confirmation'
         || request.resource.data.status == 'read'
-        || settlementResolutionMatches(notificationId);
+        || settlementResolutionMatches(notificationId)
+      )
+      && (
+        resource.data.get('type', '') != 'group_invitation'
+        || request.resource.data.status == 'read'
+        || groupInvitationResolutionMatches(notificationId)
+      );
     }
 
 
@@ -1063,27 +1295,41 @@ service cloud.firestore {
 
       match /invitations/{invitationId} {
 
-        // Signed-in users with the link can read a
-        // pending invitation that has not expired.
+        // General invitations can be opened by signed-in users with the
+        // link. Targeted invitations can only be read by their recipient.
         allow get: if isSignedIn()
           && resource.data.status == 'pending'
-          && resource.data.expiresAt > request.time;
+          && resource.data.expiresAt > request.time
+          && (
+            resource.data.get('invitedToUid', null) == null
+            || resource.data.invitedToUid == request.auth.uid
+          );
 
         // Invitations cannot be enumerated.
         allow list: if false;
 
-        allow create: if validInvitationCreation(groupId);
+        allow create: if validInvitationCreation(groupId, invitationId);
 
-        allow update: if validInvitationAcceptance(
-          groupId,
-          invitationId
-        );
+        // Dispatch on the target status so each branch is evaluated only
+        // for the operation it validates (no reliance on error handling
+        // inside "||").
+        allow update: if (
+            request.resource.data.status == 'accepted'
+            && validInvitationAcceptance(groupId, invitationId)
+          )
+          || (
+            request.resource.data.status == 'rejected'
+            && validInvitationRejection(groupId, invitationId)
+          );
 
-        // Only the creator, while still a group member,
-        // can revoke an unused invitation.
+        // Only the creator, while still a group member, can revoke an
+        // unused GENERAL (link) invitation. Targeted invitations cannot be
+        // deleted by clients, because their recipient notification cannot
+        // be updated by the sender and would be left orphaned.
         allow delete: if isGroupMember(groupId)
           && resource.data.createdBy == request.auth.uid
-          && resource.data.status == 'pending';
+          && resource.data.status == 'pending'
+          && resource.data.get('invitedToUid', null) == null;
       }
 
 
@@ -1176,8 +1422,8 @@ service cloud.firestore {
         && request.auth.uid == userId;
 
       // A valid group member can send either an ordinary settle-up
-      // reminder or a settlement confirmation request to another
-      // member of the same group.
+      // reminder, a settlement confirmation request, or a direct group
+      // invitation to another user.
       allow create: if isSignedIn()
         && (
           (
@@ -1188,6 +1434,11 @@ service cloud.firestore {
           (
             request.resource.data.get('type', '') == 'settlement_confirmation'
             && validSettlementNotification(userId, notificationId)
+          )
+          ||
+          (
+            request.resource.data.get('type', '') == 'group_invitation'
+            && validGroupInvitationNotification(userId, notificationId)
           )
         );
 
@@ -1207,11 +1458,20 @@ service cloud.firestore {
             'readAt'
           ])
 
-        && request.resource.data.status in [
-          'read',
-          'dismissed',
-          'settled'
-        ]
+        && (
+          request.resource.data.status in [
+            'read',
+            'dismissed',
+            'settled'
+          ]
+          || (
+            resource.data.get('type', '') == 'group_invitation'
+            && request.resource.data.status in [
+              'accepted',
+              'rejected'
+            ]
+          )
+        )
 
         && request.resource.data.readAt == request.time
 

@@ -15,36 +15,27 @@ class NotificationRepository {
 
   CollectionReference<Map<String, dynamic>> _myNotifications() {
     final uid = _auth.currentUser?.uid;
-
     if (uid == null) {
       throw StateError('Please sign in first.');
     }
-
     return _db.collection('users').doc(uid).collection('notifications');
   }
 
-  // Send an ordinary settle-up reminder.
   Future<void> sendSettleUpRequest({
     required Group group,
     required GroupMember recipient,
     String message = '',
   }) async {
     final user = _auth.currentUser;
-
-    if (user == null) {
-      throw StateError('Please sign in first.');
-    }
+    if (user == null) throw StateError('Please sign in first.');
 
     final sender = _findMember(group, user.uid);
-
     if (sender == null) {
       throw StateError('You are not a member of this group.');
     }
-
     _validateRecipient(group, recipient, user.uid);
 
     final cleanMessage = message.trim();
-
     if (cleanMessage.length > 200) {
       throw ArgumentError('Message cannot exceed 200 characters.');
     }
@@ -68,7 +59,6 @@ class NotificationRepository {
         });
   }
 
-  // Create a pending settlement and its matching notification atomically.
   Future<String> sendPaymentConfirmationRequest({
     required Group group,
     required GroupMember recipient,
@@ -76,37 +66,26 @@ class NotificationRepository {
     String message = '',
   }) async {
     final user = _auth.currentUser;
-
-    if (user == null) {
-      throw StateError('Please sign in first.');
-    }
-
+    if (user == null) throw StateError('Please sign in first.');
     if (amountPaise <= 0) {
       throw ArgumentError('Payment amount must be positive.');
     }
 
     final sender = _findMember(group, user.uid);
-
     if (sender == null) {
       throw StateError('You are not a member of this group.');
     }
-
     _validateRecipient(group, recipient, user.uid);
     _validateMemberName(sender.displayName);
     _validateMemberName(recipient.displayName);
 
     final cleanMessage = message.trim();
-
     if (cleanMessage.length > 200) {
       throw ArgumentError('Message cannot exceed 200 characters.');
     }
 
     final groupRef = _db.collection('groups').doc(group.id);
-
-    // Generate settlement ID first.
     final settlementRef = groupRef.collection('settlements').doc();
-
-    // The notification ID MUST equal the settlement ID.
     final notificationRef = _db
         .collection('users')
         .doc(recipient.userId)
@@ -114,8 +93,6 @@ class NotificationRepository {
         .doc(settlementRef.id);
 
     final batch = _db.batch();
-
-    // Create pending settlement.
     batch.set(settlementRef, {
       'groupId': group.id,
       'groupName': group.name,
@@ -129,7 +106,6 @@ class NotificationRepository {
       'resolvedAt': null,
     });
 
-    // Create matching recipient notification.
     batch.set(notificationRef, {
       'type': 'settlement_confirmation',
       'settlementId': settlementRef.id,
@@ -147,23 +123,17 @@ class NotificationRepository {
     });
 
     await batch.commit();
-
     return settlementRef.id;
   }
 
-  // Recipient confirms or rejects a payment.
   Future<void> respondToSettlement({
     required AppNotification notification,
     required bool confirm,
   }) async {
     final user = _auth.currentUser;
-
-    if (user == null) {
-      throw StateError('Please sign in first.');
-    }
+    if (user == null) throw StateError('Please sign in first.');
 
     final settlementId = notification.settlementId;
-
     if (!notification.isPaymentConfirmation ||
         settlementId == null ||
         settlementId != notification.id) {
@@ -175,27 +145,20 @@ class NotificationRepository {
         .doc(notification.groupId)
         .collection('settlements')
         .doc(settlementId);
-
     final notificationRef = _myNotifications().doc(notification.id);
 
     final batch = _db.batch();
-
-    // Update settlement status.
     batch.update(settlementRef, {
       'status': confirm ? 'confirmed' : 'rejected',
       'resolvedAt': FieldValue.serverTimestamp(),
     });
-
-    // Update matching notification status.
     batch.update(notificationRef, {
       'status': confirm ? 'settled' : 'dismissed',
       'readAt': FieldValue.serverTimestamp(),
     });
-
     await batch.commit();
   }
 
-  // Listen to the current user's notifications.
   Stream<List<AppNotification>> watchMyNotifications() {
     return _myNotifications()
         .orderBy('createdAt', descending: true)
@@ -205,19 +168,21 @@ class NotificationRepository {
           return snapshot.docs.map((doc) {
             final data = doc.data();
             final timestamp = data['createdAt'] as Timestamp?;
+            final rawStatus = data['status'] as String?;
 
             return AppNotification(
               id: doc.id,
               type: data['type'] as String? ?? 'settle_up',
               settlementId: data['settlementId'] as String?,
               amountPaise: (data['amountPaise'] as num?)?.toInt(),
+              invitationId: data['invitationId'] as String?,
               groupId: data['groupId'] as String? ?? '',
               groupName: data['groupName'] as String? ?? 'Group',
               fromUid: data['fromUid'] as String? ?? '',
               fromName: data['fromName'] as String? ?? 'Member',
               message: data['message'] as String? ?? '',
               status: AppNotificationStatus.values.firstWhere(
-                (value) => value.name == data['status'],
+                (value) => value.name == rawStatus,
                 orElse: () => AppNotificationStatus.unread,
               ),
               createdAt: timestamp?.toDate() ?? DateTime.now(),
@@ -226,7 +191,6 @@ class NotificationRepository {
         });
   }
 
-  // Watch unread notification count.
   Stream<int> watchUnreadCount() {
     return _myNotifications()
         .where('status', isEqualTo: 'unread')
@@ -234,13 +198,14 @@ class NotificationRepository {
         .map((snapshot) => snapshot.docs.length);
   }
 
-  // Update ordinary notification status.
   Future<void> updateStatus(
     String notificationId,
     AppNotificationStatus status,
   ) async {
-    if (status == AppNotificationStatus.unread) {
-      throw ArgumentError('Invalid notification status.');
+    if (status == AppNotificationStatus.unread ||
+        status == AppNotificationStatus.accepted ||
+        status == AppNotificationStatus.rejected) {
+      throw ArgumentError('Invalid notification status update.');
     }
 
     await _myNotifications().doc(notificationId).update({
@@ -251,11 +216,8 @@ class NotificationRepository {
 
   GroupMember? _findMember(Group group, String uid) {
     for (final member in group.members) {
-      if (member.userId == uid) {
-        return member;
-      }
+      if (member.userId == uid) return member;
     }
-
     return null;
   }
 
@@ -267,7 +229,6 @@ class NotificationRepository {
     if (recipient.userId == currentUid) {
       throw ArgumentError('You cannot send a request to yourself.');
     }
-
     if (!group.members.any((member) => member.userId == recipient.userId)) {
       throw StateError('Recipient is not a group member.');
     }
@@ -275,7 +236,6 @@ class NotificationRepository {
 
   void _validateMemberName(String name) {
     final cleanName = name.trim();
-
     if (cleanName.length < 2 || cleanName.length > 40) {
       throw ArgumentError('Member name must contain 2 to 40 characters.');
     }

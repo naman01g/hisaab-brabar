@@ -12,12 +12,17 @@ import '../../../expenses/domain/services/balance_calculator.dart';
 import '../../../groups/data/repositories/group_repository.dart';
 import '../../../groups/domain/models/group.dart';
 import '../../../groups/presentation/screens/group_details_screen.dart';
+import '../../../groups/presentation/screens/group_invitation_screen.dart';
+import '../../../notifications/data/repositories/notification_repository.dart';
+import '../../../notifications/presentation/screens/notifications_screen.dart';
 import '../widgets/quick_action_tile.dart';
 import '../widgets/group_card.dart';
 import '../widgets/transaction_tile.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final ValueChanged<int>? onSelectTab;
+
+  const HomeScreen({super.key, this.onSelectTab});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -27,6 +32,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final _groupRepository = GroupRepository();
   final _expenseRepository = ExpenseRepository();
   final _settlementRepository = GroupSettlementRepository();
+  final _notificationRepository = NotificationRepository();
+  late final Stream<int> _unreadCountStream;
 
   StreamSubscription<List<Group>>? _groupsSubscription;
   final Map<String, StreamSubscription<List<Expense>>> _expenseSubscriptions =
@@ -70,6 +77,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _unreadCountStream = _notificationRepository.watchUnreadCount();
     _groupsSubscription = _groupRepository.watchMyGroups().listen(
       _handleGroups,
       onError: (Object error) {
@@ -279,6 +287,62 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _openNotifications() {
+    Navigator.of(context)
+        .push(CupertinoPageRoute(builder: (_) => const NotificationsScreen()));
+  }
+
+  void _openGroupInvitation(Group group) {
+    Navigator.of(context).push(
+      CupertinoPageRoute(builder: (_) => GroupInvitationScreen(group: group)),
+    );
+  }
+
+  Future<void> _chooseGroupAndOpen({
+    required String title,
+    required ValueChanged<Group> onSelected,
+  }) async {
+    if (_groups.isEmpty) {
+      await showCupertinoDialog<void>(
+        context: context,
+        builder: (dialogContext) => CupertinoAlertDialog(
+          title: const Text('No groups yet'),
+          content: const Text(
+            'Create or join a group before using this action.',
+          ),
+          actions: [
+            CupertinoDialogAction(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    await showCupertinoModalPopup<void>(
+      context: context,
+      builder: (sheetContext) => CupertinoActionSheet(
+        title: Text(title),
+        message: const Text('Choose one of your groups.'),
+        actions: _groups.map((group) {
+          return CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.of(sheetContext).pop();
+              onSelected(group);
+            },
+            child: Text(group.name),
+          );
+        }).toList(),
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.of(sheetContext).pop(),
+          child: const Text('Cancel'),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final totals = _calculateTotals();
@@ -293,6 +357,51 @@ class _HomeScreenState extends State<HomeScreen> {
       navigationBar: CupertinoNavigationBar(
         middle: const Text('Hisaab Brabar'),
         backgroundColor: AppColors.background.withValues(alpha: 0.9),
+        trailing: CupertinoButton(
+          padding: EdgeInsets.zero,
+          onPressed: _openNotifications,
+          child: StreamBuilder<int>(
+            stream: _unreadCountStream,
+            builder: (context, snapshot) {
+              final hasUnread = (snapshot.data ?? 0) > 0;
+
+              return SizedBox(
+                width: 32,
+                height: 32,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    const Align(
+                      alignment: Alignment.center,
+                      child: Icon(
+                        CupertinoIcons.bell,
+                        color: AppColors.primary,
+                        size: 23,
+                      ),
+                    ),
+                    if (hasUnread)
+                      Positioned(
+                        top: 2,
+                        right: 2,
+                        child: Container(
+                          width: 9,
+                          height: 9,
+                          decoration: BoxDecoration(
+                            color: AppColors.error,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: AppColors.background,
+                              width: 1.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
       ),
       child: SafeArea(
         child: ListView(
@@ -330,6 +439,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: 'Add Expense',
                     icon: CupertinoIcons.add,
                     iconBackground: AppColors.secondary,
+                    onTap: () => widget.onSelectTab?.call(2),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -338,6 +448,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: 'Settle Up',
                     icon: CupertinoIcons.arrow_left_right,
                     iconBackground: AppColors.sage,
+                    onTap: () => _chooseGroupAndOpen(
+                      title: 'Choose a group to settle up',
+                      onSelected: _openGroup,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -346,6 +460,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: 'Invite',
                     icon: CupertinoIcons.person_2,
                     iconBackground: AppColors.secondary,
+                    onTap: () => _chooseGroupAndOpen(
+                      title: 'Choose a group to invite someone',
+                      onSelected: _openGroupInvitation,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -354,6 +472,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: 'Discover',
                     icon: CupertinoIcons.search,
                     iconBackground: AppColors.sage,
+                    onTap: () => widget.onSelectTab?.call(3),
                   ),
                 ),
               ],

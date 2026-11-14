@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../../domain/models/group.dart';
-import '../../data/repositories/group_invitation_repository.dart';
 import '../../../people/data/repositories/people_repository.dart';
 import '../../../people/domain/models/discoverable_profile.dart';
+import '../../data/repositories/group_invitation_repository.dart';
+import '../../domain/models/group.dart';
 
 class GroupInvitationScreen extends StatefulWidget {
   final Group group;
@@ -18,10 +18,7 @@ class GroupInvitationScreen extends StatefulWidget {
 
 class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
   final GroupInvitationRepository _repository = GroupInvitationRepository();
-
-  // Use the SAME repository as People Discovery.
   final PeopleRepository _peopleRepository = PeopleRepository();
-
   final TextEditingController _tagSearchController = TextEditingController();
 
   String? _shareLink;
@@ -30,12 +27,11 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
 
   bool _loading = false;
   bool _searchingPeople = false;
-  bool _sharingPersonInvite = false;
+  String? _sharingInviteUid;
 
   String? _error;
   String? _peopleError;
   String _searchedTag = '';
-
   List<DiscoverableProfile> _people = [];
 
   static const Map<String, String> _avatars = {
@@ -54,10 +50,6 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
     _tagSearchController.dispose();
     super.dispose();
   }
-
-  // --------------------------------------------------
-  // CREATE INVITATION LINK
-  // --------------------------------------------------
 
   String _createShareLink({
     required String groupId,
@@ -78,14 +70,12 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
 
     try {
       final invitation = await _repository.createInvitation(widget.group);
-
       final link = _createShareLink(
         groupId: invitation.groupId,
         invitationId: invitation.id,
       );
 
       if (!mounted) return;
-
       setState(() {
         _shareLink = link;
         _invitationCode = invitation.invitationCode;
@@ -94,17 +84,12 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
       });
     } catch (error) {
       if (!mounted) return;
-
       setState(() {
         _error = error.toString();
         _loading = false;
       });
     }
   }
-
-  // --------------------------------------------------
-  // SEARCH PEOPLE - SAME LOGIC AS PEOPLE DISCOVERY
-  // --------------------------------------------------
 
   Future<void> _searchPeople() async {
     final tag = PeopleRepository.normalizeTag(_tagSearchController.text);
@@ -128,22 +113,25 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
     });
 
     try {
-      // This is exactly the method used by PeopleDiscoveryScreen.
+      // Use the same repository method as People Discovery.
       final results = await _peopleRepository.searchByTag(tag);
+      final currentMemberIds = widget.group.members
+          .map((member) => member.userId)
+          .toSet();
+      final filteredResults = results
+          .where((person) => !currentMemberIds.contains(person.uid))
+          .toList();
 
       if (!mounted) return;
-
       setState(() {
-        _people = results;
+        _people = filteredResults;
         _searchingPeople = false;
-
-        if (results.isEmpty) {
-          _peopleError = 'No discoverable profiles found for #$tag.';
+        if (filteredResults.isEmpty) {
+          _peopleError = 'No new discoverable people found for #$tag.';
         }
       });
     } catch (error) {
       if (!mounted) return;
-
       setState(() {
         _searchingPeople = false;
         _peopleError = error is ArgumentError
@@ -153,69 +141,84 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
     }
   }
 
-  // --------------------------------------------------
-  // INVITE SELECTED PERSON
-  // --------------------------------------------------
-
   Future<void> _invitePerson(DiscoverableProfile person) async {
-    if (_sharingPersonInvite) return;
-
-    if (widget.group.members.length >= 50) {
-      _showMessage(
-        'Group is full',
-        'This group has reached its 50-member limit.',
-      );
-      return;
-    }
+    if (_sharingInviteUid != null) return;
 
     setState(() {
-      _sharingPersonInvite = true;
-      _error = null;
+      _sharingInviteUid = person.uid;
     });
 
     try {
-      final invitation = await _repository.createInvitation(widget.group);
-
-      final link = _createShareLink(
-        groupId: invitation.groupId,
-        invitationId: invitation.id,
+      await _repository.sendDirectInvitation(
+        group: widget.group,
+        recipientUid: person.uid,
+        recipientName: person.displayName,
       );
 
       if (!mounted) return;
-
-      await SharePlus.instance.share(
-        ShareParams(
-          title: 'Join ${widget.group.name}',
-          subject: 'Group invitation',
-          text:
-              'Hi ${person.displayName}!\n\n'
-              'I would like to invite you to join '
-              '"${widget.group.name}" on Hisaab Brabar.\n\n'
-              'Invitation link: $link\n\n'
-              'Invitation code: ${invitation.invitationCode}\n\n'
-              'This invitation expires in 7 days.\n\n'
-              'Open the link and accept the invitation to join.',
-        ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Invitation sent to ${person.displayName}.')),
       );
     } catch (error) {
       if (!mounted) return;
-
-      _showMessage('Unable to create invitation', error.toString());
+      _showMessage('Unable to send invitation', error.toString());
     } finally {
       if (mounted) {
         setState(() {
-          _sharingPersonInvite = false;
+          _sharingInviteUid = null;
         });
       }
     }
   }
 
-  // --------------------------------------------------
-  // PERSON CARD
-  // --------------------------------------------------
+  Future<void> _copyInvitation() async {
+    final link = _shareLink;
+    if (link == null) return;
+
+    await Clipboard.setData(ClipboardData(text: link));
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Invitation link copied!')));
+  }
+
+  Future<void> _shareInvitation() async {
+    final link = _shareLink;
+    final code = _invitationCode;
+    if (link == null || code == null) return;
+
+    await SharePlus.instance.share(
+      ShareParams(
+        title: 'Join ${widget.group.name}',
+        subject: 'Group invitation',
+        text:
+            'Join my group "${widget.group.name}" on Hisaab Brabar!\n\n'
+            'Invitation link: $link\n\n'
+            'Invitation code: $code\n\n'
+            'This invitation expires in 7 days.',
+      ),
+    );
+  }
+
+  void _showMessage(String title, String message) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _personCard(DiscoverableProfile person, ThemeData theme) {
     final avatar = _avatars[person.avatarId] ?? '🧑‍🎓';
+    final isSending = _sharingInviteUid == person.uid;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -228,9 +231,7 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
               radius: 25,
               child: Text(avatar, style: const TextStyle(fontSize: 25)),
             ),
-
             const SizedBox(width: 12),
-
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -241,9 +242,7 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-
                   const SizedBox(height: 7),
-
                   Wrap(
                     spacing: 6,
                     runSpacing: 5,
@@ -258,21 +257,21 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
                       );
                     }).toList(),
                   ),
-
                   const SizedBox(height: 8),
-
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.tonalIcon(
-                      onPressed: _sharingPersonInvite
-                          ? null
-                          : () => _invitePerson(person),
-                      icon: const Icon(Icons.person_add_alt_1, size: 17),
-                      label: Text(
-                        _sharingPersonInvite
-                            ? 'Preparing invitation...'
-                            : 'Invite',
-                      ),
+                      onPressed: _sharingInviteUid == null
+                          ? () => _invitePerson(person)
+                          : null,
+                      icon: isSending
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.person_add_alt_1, size: 17),
+                      label: Text(isSending ? 'Sending...' : 'Invite'),
                     ),
                   ),
                 ],
@@ -284,95 +283,25 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
     );
   }
 
-  // --------------------------------------------------
-  // GENERAL INVITATION: COPY AND SHARE
-  // --------------------------------------------------
-
-  Future<void> _copyInvitation() async {
-    final link = _shareLink;
-
-    if (link == null) return;
-
-    await Clipboard.setData(ClipboardData(text: link));
-
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Invitation link copied!')));
-  }
-
-  Future<void> _shareInvitation() async {
-    final link = _shareLink;
-    final code = _invitationCode;
-
-    if (link == null || code == null) return;
-
-    await SharePlus.instance.share(
-      ShareParams(
-        title: 'Join ${widget.group.name}',
-        subject: 'Group invitation',
-        text:
-            'Join my group "${widget.group.name}" '
-            'on Hisaab Brabar!\n\n'
-            'Invitation link: $link\n\n'
-            'Invitation code: $code\n\n'
-            'This invitation expires in 7 days.',
-      ),
-    );
-  }
-
-  // --------------------------------------------------
-  // MESSAGE
-  // --------------------------------------------------
-
-  void _showMessage(String title, String message) {
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(title),
-          content: Text(message),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(dialogContext);
-              },
-              child: const Text('OK'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // --------------------------------------------------
-  // BUILD
-  // --------------------------------------------------
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Invite Members')),
-
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
-
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 12),
-
               Icon(
                 Icons.group_add_rounded,
                 size: 58,
                 color: theme.colorScheme.primary,
               ),
-
               const SizedBox(height: 16),
-
               Text(
                 'Invite friends to your group',
                 textAlign: TextAlign.center,
@@ -380,30 +309,20 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-
               const SizedBox(height: 8),
-
               Text(
-                'Find people by their interests, college '
-                'or profile tags.',
+                'Find people by their interests, college or profile tags.',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyMedium,
               ),
-
               const SizedBox(height: 28),
-
-              // ======================================
-              // SEARCH PEOPLE
-              // ======================================
               Text(
                 'Find People',
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.bold,
                 ),
               ),
-
               const SizedBox(height: 10),
-
               TextField(
                 controller: _tagSearchController,
                 textCapitalization: TextCapitalization.none,
@@ -416,25 +335,21 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
                 ),
                 onSubmitted: (_) => _searchPeople(),
               ),
-
               const SizedBox(height: 12),
-
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
                   onPressed: _searchingPeople ? null : _searchPeople,
                   child: _searchingPeople
                       ? const SizedBox(
-                          height: 20,
                           width: 20,
+                          height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Text('Search People'),
                 ),
               ),
-
               const SizedBox(height: 16),
-
               if (_searchedTag.isNotEmpty)
                 Text(
                   'Results for #$_searchedTag',
@@ -442,7 +357,6 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-
               if (_peopleError != null)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 12),
@@ -454,41 +368,27 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
                     ),
                   ),
                 ),
-
               if (_people.isNotEmpty) ...[
                 const SizedBox(height: 12),
-
                 ..._people.map((person) => _personCard(person, theme)),
-
                 const SizedBox(height: 8),
               ],
-
               Text(
-                'Selecting Invite creates a unique invitation '
-                'link and opens the share sheet. The person '
-                'must accept before joining.',
+                'The recipient receives an in-app notification and must '
+                'accept before becoming a group member.',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodySmall,
               ),
-
               const SizedBox(height: 28),
-
               const Divider(),
-
               const SizedBox(height: 16),
-
-              // ======================================
-              // GENERAL INVITATION
-              // ======================================
               Text(
                 'Share Invitation Link',
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.bold,
                 ),
               ),
-
               const SizedBox(height: 12),
-
               if (_shareLink == null) ...[
                 FilledButton.icon(
                   onPressed: _loading ? null : _createInvitation,
@@ -514,29 +414,21 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
                           'Your invitation link',
                           style: theme.textTheme.titleMedium,
                         ),
-
                         const SizedBox(height: 12),
-
                         SelectableText(_shareLink!),
-
                         const SizedBox(height: 20),
-
                         Text(
                           'Invitation code',
                           style: theme.textTheme.titleSmall,
                         ),
-
                         const SizedBox(height: 8),
-
                         SelectableText(
                           _invitationCode!,
                           style: theme.textTheme.bodyLarge?.copyWith(
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-
                         const SizedBox(height: 16),
-
                         if (_expiresAt != null)
                           Text(
                             'Expires: ${_expiresAt!.toLocal()}',
@@ -546,31 +438,25 @@ class _GroupInvitationScreenState extends State<GroupInvitationScreen> {
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 16),
-
                 FilledButton.icon(
                   onPressed: _shareInvitation,
                   icon: const Icon(Icons.share),
                   label: const Text('Share Invitation'),
                 ),
-
                 const SizedBox(height: 10),
-
                 OutlinedButton.icon(
                   onPressed: _copyInvitation,
                   icon: const Icon(Icons.copy),
                   label: const Text('Copy Link'),
                 ),
               ],
-
               if (_error != null) ...[
                 const SizedBox(height: 16),
-
                 Text(
                   _error!,
-                  textAlign: TextAlign.center,
                   style: TextStyle(color: theme.colorScheme.error),
+                  textAlign: TextAlign.center,
                 ),
               ],
             ],

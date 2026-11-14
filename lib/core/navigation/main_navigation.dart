@@ -20,12 +20,13 @@ class MainNavigation extends StatefulWidget {
 
 class _MainNavigationState extends State<MainNavigation> {
   final AppLinks _appLinks = AppLinks();
-
+  late final CupertinoTabController _tabController;
   StreamSubscription<Uri>? _linkSubscription;
 
   @override
   void initState() {
     super.initState();
+    _tabController = CupertinoTabController(initialIndex: 0);
 
     _linkSubscription = _appLinks.uriLinkStream.listen(_handleLink);
 
@@ -67,12 +68,14 @@ class _MainNavigationState extends State<MainNavigation> {
   @override
   void dispose() {
     _linkSubscription?.cancel();
+    _tabController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return CupertinoTabScaffold(
+      controller: _tabController,
       tabBar: CupertinoTabBar(
         activeColor: AppColors.primary,
         inactiveColor: AppColors.textSecondary,
@@ -105,7 +108,9 @@ class _MainNavigationState extends State<MainNavigation> {
           builder: (context) {
             switch (index) {
               case 0:
-                return const HomeScreen();
+                return HomeScreen(
+                  onSelectTab: (tabIndex) => _tabController.index = tabIndex,
+                );
               case 1:
                 return const GroupsScreen();
               case 2:
@@ -115,7 +120,9 @@ class _MainNavigationState extends State<MainNavigation> {
               case 4:
                 return const ProfileScreen();
               default:
-                return const HomeScreen();
+                return HomeScreen(
+                  onSelectTab: (tabIndex) => _tabController.index = tabIndex,
+                );
             }
           },
         );

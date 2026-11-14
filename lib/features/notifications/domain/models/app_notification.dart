@@ -1,4 +1,11 @@
-enum AppNotificationStatus { unread, read, dismissed, settled }
+enum AppNotificationStatus {
+  unread,
+  read,
+  dismissed,
+  settled,
+  accepted,
+  rejected,
+}
 
 class AppNotification {
   final String id;
@@ -10,10 +17,10 @@ class AppNotification {
   final AppNotificationStatus status;
   final DateTime createdAt;
 
-  // Additional fields for payment confirmations.
   final String type;
   final String? settlementId;
   final int? amountPaise;
+  final String? invitationId;
 
   const AppNotification({
     required this.id,
@@ -27,7 +34,10 @@ class AppNotification {
     this.type = 'settle_up',
     this.settlementId,
     this.amountPaise,
+    this.invitationId,
   });
 
   bool get isPaymentConfirmation => type == 'settlement_confirmation';
+
+  bool get isGroupInvitation => type == 'group_invitation';
 }

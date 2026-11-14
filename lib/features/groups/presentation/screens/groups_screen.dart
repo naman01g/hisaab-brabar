@@ -8,6 +8,7 @@ import '../../domain/models/group.dart';
 import '../widgets/group_list_card.dart';
 import 'create_group_screen.dart';
 import 'group_details_screen.dart';
+import 'join_group_code_screen.dart';
 
 class GroupsScreen extends StatefulWidget {
   const GroupsScreen({super.key});
@@ -43,6 +44,13 @@ class _GroupsScreenState extends State<GroupsScreen> {
     await Navigator.push<bool>(
       context,
       CupertinoPageRoute(builder: (context) => const CreateGroupScreen()),
+    );
+  }
+
+  Future<void> _openJoinByCode() async {
+    await Navigator.push<bool>(
+      context,
+      CupertinoPageRoute(builder: (context) => const JoinGroupCodeScreen()),
     );
   }
 
@@ -88,10 +96,20 @@ class _GroupsScreenState extends State<GroupsScreen> {
       navigationBar: CupertinoNavigationBar(
         middle: const Text('Your Groups'),
         backgroundColor: AppColors.background.withValues(alpha: 0.9),
-        trailing: CupertinoButton(
-          padding: EdgeInsets.zero,
-          onPressed: _openCreateGroup,
-          child: const Icon(CupertinoIcons.add, color: AppColors.primary),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CupertinoButton(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              onPressed: _openJoinByCode,
+              child: const Icon(CupertinoIcons.link, color: AppColors.primary),
+            ),
+            CupertinoButton(
+              padding: const EdgeInsets.only(left: 8),
+              onPressed: _openCreateGroup,
+              child: const Icon(CupertinoIcons.add, color: AppColors.primary),
+            ),
+          ],
         ),
       ),
       child: SafeArea(

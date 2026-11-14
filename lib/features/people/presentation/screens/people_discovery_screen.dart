@@ -205,7 +205,7 @@ class _PeopleDiscoveryScreenState extends State<PeopleDiscoveryScreen> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'Try tags like #akgec, #flutter, #cse or #travel.',
+                    'Try tags like - SoS , Akgec, or BH3.',
                     style: TextStyle(
                       color: AppColors.textSecondary,
                       fontSize: 12,
