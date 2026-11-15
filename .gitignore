@@ -100,3 +100,17 @@ ui-debug.log
 # ==========================================
 
 .DS_Store
+
+# Local IDE settings
+.vscode/
+*.code-workspace
+
+# Android local configuration
+local.properties
+
+# Signing credentials
+*.mobileprovision
+# Private local configuration
+.env
+android/app/google-services.json
+service-account.json

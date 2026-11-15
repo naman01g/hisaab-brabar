@@ -4,8 +4,6 @@ import 'package:url_launcher/url_launcher.dart';
 class UpiPaymentService {
   UpiPaymentService._();
 
-  // Keep @ unencoded in the UPI ID.
-  // Some UPI apps have inconsistent URL decoding.
   static String _encodeQuery(Map<String, String> parameters) {
     return parameters.entries
         .map((entry) {
